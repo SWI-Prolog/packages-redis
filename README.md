@@ -20,6 +20,16 @@ Charles.  The main difference to the original client are:
   - This library allows for using the Redis publish/subscribe
     interface.  Messages are propagated using broadcast/1.
 
+## Aim
+
+Redis provides a high performance, low latency store for various shared
+data structures as well as simple message brokering. In addition it can
+operate in a cluster, offering high availability. Together with being
+freely available and extremely simple to setup, this makes redis an
+ideal tool to share data between multiple servers or establish data
+sharing between micro services.
+
+
 ## Example
 
 This example communicates with the default redis server at
