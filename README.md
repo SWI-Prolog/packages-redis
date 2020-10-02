@@ -49,7 +49,6 @@ maps to the Prolog term
 
 On return, the following mapping applies:
 
-   |--------|----------------|
    | Redis  | Prolog         |
    |--------|----------------|
    | String | String         |
