@@ -23,22 +23,37 @@
             redis_connect/1,            % -Connection
             redis_connect/3,            % -Connection, +Host, +Port
             redis_disconnect/1,         % +Connection
+                                        % Queries
             redis/1,                    % +Request
             redis/2,                    % +Connection, +Request
             redis/3,                    % +Connection, +Request, -Reply
             redis_cli/1,                % +Request
+                                        % High level queries
+            redis_get_list/3,           % +Redis,+Key,-List
+            redis_get_list/4,           % +Redis,+Key,+ChunkSize,-List
+            redis_put_list/3,           % +Redis,+Key,+List
+            redis_get_hash/3,           % +Redis,+Key,-Data:dict
+            redis_put_hash/3,           % +Redis,+Key,+Data:dict
+                                        % Publish/Subscribe
             redis_subscribe/2,          % +Redis, +Channels
             redis_unsubscribe/2,        % +Redis, +Channels
             redis_write/2,              % +Redis,+Command
             redis_read/2                % +Redis,-Reply
           ]).
-:- use_module(library(socket)).
-:- use_module(library(error)).
-:- use_module(library(option)).
-:- use_module(library(apply)).
-:- use_module(library(broadcast)).
-:- use_module(library(debug)).
-:- use_module(library(http/http_stream)).
+:- autoload(library(socket), [tcp_connect/3]).
+:- autoload(library(apply), [maplist/2]).
+:- autoload(library(broadcast), [broadcast/1]).
+:- autoload(library(error),
+            [ must_be/2,
+              instantiation_error/1,
+              existence_error/2,
+              permission_error/3
+            ]).
+:- autoload(library(lazy_lists), [lazy_list/2]).
+:- autoload(library(lists), [append/3]).
+:- autoload(library(option), [merge_options/3, option/2, option/3]).
+:- autoload(library(http/http_stream), [stream_range_open/3]).
+:- use_module(library(debug), [debug/3]).
 
 /** <module> Redis client
 
@@ -308,6 +323,109 @@ redis_write(Redis, Command) :-
 redis_read(Redis, Reply) :-
     redis_stream(Redis, S, true),
     gpredis_read(S, Reply).
+
+
+		 /*******************************
+		 *      HIGH LEVEL ACCESS	*
+		 *******************************/
+
+%!  redis_get_list(+Redis, +Key, -List) is det.
+%!  redis_get_list(+Redis, +Key, +ChunkSize, -List) is det.
+%
+%   Get the content of a Redis list in   List. If ChunkSize is given and
+%   smaller than the list length, List is returned as a _lazy list_. The
+%   actual values are requested using   redis  ``LRANGE`` requests. Note
+%   that this results in O(N^2) complexity. Using   a  lazy list is most
+%   useful for relatively short lists holding possibly large items.
+%
+%   Note that values retrieved are _strings_, unless the value was added
+%   using prolog(Term).
+%
+%   @see lazy_list/2 for a discussion  on   the  difference between lazy
+%   lists and normal lists.
+
+redis_get_list(Redis, Key, List) :-
+    redis_get_list(Redis, Key, -1, List).
+
+redis_get_list(Redis, Key, Chunk, List) :-
+    redis(Redis, llen(Key), Len),
+    (   (   Chunk >= Len
+        ;   Chunk == -1
+        )
+    ->  (   Len == 0
+        ->  List = []
+        ;   End is Len-1,
+            list_range(Redis, Key, 0, End, List)
+        )
+    ;   lazy_list(rlist_next(s(Redis,Key,0,Chunk,Len)), List)
+    ).
+
+rlist_next(State, List, Tail) :-
+    State = s(Redis,Key,Offset,Slice,Len),
+    End is min(Len-1, Offset+Slice-1),
+    list_range(Redis, Key, Offset, End, Elems),
+    (   End =:= Len-1
+    ->  List = Elems,
+        Tail = []
+    ;   Offset2 is Offset+Slice,
+        nb_setarg(3, State, Offset2),
+        append(Elems, Tail, List)
+    ).
+
+% Redis LRANGE demands End > Start and returns inclusive.
+
+list_range(DB, Key, Start, Start, [Elem]) :-
+    !,
+    redis(DB, lindex(Key, Start), Elem).
+list_range(DB, Key, Start, End, List) :-
+    !,
+    redis(DB, lrange(Key, Start, End), List).
+
+
+
+%!  redis_put_list(+Redis, +Key, +List) is det.
+%
+%   Associate a Redis key with a list.  As   Redis  has no concept of an
+%   empty list, if List is `[]`, Key  is _deleted_. Note that key values
+%   are always strings in  Redis.  The   same  conversion  rules  as for
+%   redis/1-3 apply.
+
+redis_put_list(Redis, Key, List) :-
+    redis(Redis, del(Key), _),
+    (   List == []
+    ->  true
+    ;   Term =.. [rpush,Key|List],
+        redis(Redis, Term, _Count)
+    ).
+
+
+%!  redis_get_hash(+Redis, +Key, -Data:dict) is det.
+%!  redis_put_hash(+Redis, +Key, +Data:dict) is det.
+%
+%   Put/get a Redis hash as a Prolog  dict. Putting a dict first deletes
+%   Key. Note that in many cases   applications will manage Redis hashes
+%   by key. redis_get_hash/3 is notably a   user friendly alternative to
+%   the Redis ``HGETALL`` command. If the  Redis   hash  is  not used by
+%   other (non-Prolog) applications one  may   also  consider  using the
+%   prolog(Term) syntax to store the Prolog dict as-is.
+
+redis_get_hash(Redis, Key, Dict) :-
+    redis(Redis, hgetall(Key), TwoList),
+    pairs_2list(Pairs, TwoList),
+    dict_pairs(Dict, _, Pairs).
+
+redis_put_hash(Redis, Key, Dict) :-
+    dict_pairs(Dict, _Tag, Pairs),
+    pairs_2list(Pairs, TwoList),
+    Term =.. [hset,Key|TwoList],
+    redis(Redis, del(Key), _),
+    redis(Redis, Term, _Count).
+
+pairs_2list([], []) :-
+    !.
+pairs_2list([Name-Value|T0], [NameS,Value|T]) :-
+    atom_string(Name, NameS),
+    pairs_2list(T0, T).
 
 
 		 /*******************************
