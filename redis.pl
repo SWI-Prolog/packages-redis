@@ -34,6 +34,10 @@
             redis_put_list/3,           % +Redis,+Key,+List
             redis_get_hash/3,           % +Redis,+Key,-Data:dict
             redis_put_hash/3,           % +Redis,+Key,+Data:dict
+            redis_scan/3,               % +Redis,-LazyList,+Options
+            redis_sscan/4,              % +Redis,+Set,-LazyList,+Options
+            redis_hscan/4,              % +Redis,+Hash,-LazyList,+Options
+            redis_zscan/4,              % +Redis,+Set,-LazyList,+Options
                                         % Publish/Subscribe
             redis_subscribe/2,          % +Redis, +Channels
             redis_unsubscribe/2,        % +Redis, +Channels
@@ -426,6 +430,81 @@ pairs_2list([], []) :-
 pairs_2list([Name-Value|T0], [NameS,Value|T]) :-
     atom_string(Name, NameS),
     pairs_2list(T0, T).
+
+%!  redis_scan(+Redis, -LazyList, +Options) is det.
+%!  redis_sscan(+Redis, -LazyList, +Options) is det.
+%!  redis_hscan(+Redis, -LazyList, +Options) is det.
+%!  redis_zscan(+Redis, -LazyList, +Options) is det.
+%
+%   Map the Redis ``SCAN``, ``SSCAN``,   ``HSCAN`` and `ZSCAN`` commands
+%   into a _lazy list_. For redis_scan/3 and redis_sscan/4 the result is
+%   a list of strings. For redis_hscan/4   and redis_zscan/4, the result
+%   is a list of _pairs_.   Options processed:
+%
+%     - match(Pattern)
+%       Adds the ``MATCH`` subcommand, only returning matches for
+%       Pattern.
+%     - count(Count)
+%       Adds the ``COUNT`` subcommand, giving a hint to the size of the
+%       chunks fetched.
+%     - type(Type)
+%       Adds the ``TYPE`` subcommand, only returning answers of the
+%       indicated type.
+%
+%   @see lazy_list/2.
+
+redis_scan(Redis, LazyList, Options) :-
+    scan_options([match,count,type], Options, Parms),
+    lazy_list(scan_next(s(scan,Redis,0,Parms)), LazyList).
+
+redis_sscan(Redis, Set, LazyList, Options) :-
+    scan_options([match,count,type], Options, Parms),
+    lazy_list(scan_next(s(sscan(Set),Redis,0,Parms)), LazyList).
+
+redis_hscan(Redis, Hash, LazyList, Options) :-
+    scan_options([match,count,type], Options, Parms),
+    lazy_list(scan_next(s(hscan(Hash),Redis,0,Parms)), LazyList).
+
+redis_zscan(Redis, Set, LazyList, Options) :-
+    scan_options([match,count,type], Options, Parms),
+    lazy_list(scan_next(s(zscan(Set),Redis,0,Parms)), LazyList).
+
+scan_options([], _, []).
+scan_options([H|T0], Options, [H,V|T]) :-
+    Term =.. [H,V],
+    option(Term, Options),
+    !,
+    scan_options(T0, Options, T).
+scan_options([_|T0], Options, T) :-
+    scan_options(T0, Options, T).
+
+
+scan_next(State, List, Tail) :-
+    State = s(Command,Redis,Cursor,Params),
+    Command =.. CList,
+    append(CList, [Cursor|Params], CList2),
+    Term =.. CList2,
+    redis(Redis, Term, [NewCursor,Elems0]),
+    scan_pairs(Command, Elems0, Elems),
+    (   NewCursor == "0"
+    ->  List = Elems,
+        Tail = []
+    ;   number_string(CursorI, NewCursor),
+        nb_setarg(3, State, CursorI),
+        append(Elems, Tail, List)
+    ).
+
+scan_pairs(hscan(_), List, Pairs) :-
+    !,
+    scan_pairs(List, Pairs).
+scan_pairs(zscan(_), List, Pairs) :-
+    !,
+    scan_pairs(List, Pairs).
+scan_pairs(_, List, List).
+
+scan_pairs([], []).
+scan_pairs([Key,Value|T0], [Key-Value|T]) :-
+    scan_pairs(T0, T).
 
 
 		 /*******************************
