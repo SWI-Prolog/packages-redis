@@ -23,6 +23,7 @@
             redis_connect/1,            % -Connection
             redis_connect/3,            % -Connection, +Host, +Port
             redis_disconnect/1,         % +Connection
+            redis_disconnect/2,         % +Connection,+Options
                                         % Queries
             redis/1,                    % +Request
             redis/2,                    % +Connection, +Request
@@ -212,7 +213,15 @@ has_redis_stream(redis(S), S).
 %!  redis_disconnect(+Connection) is det.
 %!  redis_disconnect(+Connection, +Options) is det.
 %
-%   Disconnect from a redis server.
+%   Disconnect from a redis server. The   second  form takes one option,
+%   similar to close/2:
+%
+%     - force(Force)
+%       When `true` (default `false`), do not raise any errors if
+%       Connection does not exist or closing the connection raises
+%       a network or I/O related exception.  This version is used
+%       internally if a connection is in a broken state, either due
+%       to a protocol error or a network issue.
 
 redis_disconnect(Redis) :-
     redis_disconnect(Redis, []).
