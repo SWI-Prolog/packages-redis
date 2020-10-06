@@ -9,3 +9,5 @@ swipl_plugin(redis
 pkg_doc(redis
 	SECTION
 	SOURCE redis.pl libredis.tex)
+
+test_libs(redis)

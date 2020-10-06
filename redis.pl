@@ -31,9 +31,9 @@
                                         % High level queries
             redis_get_list/3,           % +Redis,+Key,-List
             redis_get_list/4,           % +Redis,+Key,+ChunkSize,-List
-            redis_put_list/3,           % +Redis,+Key,+List
+            redis_set_list/3,           % +Redis,+Key,+List
             redis_get_hash/3,           % +Redis,+Key,-Data:dict
-            redis_put_hash/3,           % +Redis,+Key,+Data:dict
+            redis_set_hash/3,           % +Redis,+Key,+Data:dict
             redis_scan/3,               % +Redis,-LazyList,+Options
             redis_sscan/4,              % +Redis,+Set,-LazyList,+Options
             redis_hscan/4,              % +Redis,+Hash,-LazyList,+Options
@@ -387,14 +387,14 @@ list_range(DB, Key, Start, End, List) :-
 
 
 
-%!  redis_put_list(+Redis, +Key, +List) is det.
+%!  redis_set_list(+Redis, +Key, +List) is det.
 %
 %   Associate a Redis key with a list.  As   Redis  has no concept of an
 %   empty list, if List is `[]`, Key  is _deleted_. Note that key values
 %   are always strings in  Redis.  The   same  conversion  rules  as for
 %   redis/1-3 apply.
 
-redis_put_list(Redis, Key, List) :-
+redis_set_list(Redis, Key, List) :-
     redis(Redis, del(Key), _),
     (   List == []
     ->  true
@@ -404,7 +404,7 @@ redis_put_list(Redis, Key, List) :-
 
 
 %!  redis_get_hash(+Redis, +Key, -Data:dict) is det.
-%!  redis_put_hash(+Redis, +Key, +Data:dict) is det.
+%!  redis_set_hash(+Redis, +Key, +Data:dict) is det.
 %
 %   Put/get a Redis hash as a Prolog  dict. Putting a dict first deletes
 %   Key. Note that in many cases   applications will manage Redis hashes
@@ -418,7 +418,7 @@ redis_get_hash(Redis, Key, Dict) :-
     pairs_2list(Pairs, TwoList),
     dict_pairs(Dict, _, Pairs).
 
-redis_put_hash(Redis, Key, Dict) :-
+redis_set_hash(Redis, Key, Dict) :-
     dict_pairs(Dict, _Tag, Pairs),
     pairs_2list(Pairs, TwoList),
     Term =.. [hset,Key|TwoList],
