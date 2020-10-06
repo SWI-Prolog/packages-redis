@@ -60,6 +60,8 @@
 :- autoload(library(http/http_stream), [stream_range_open/3]).
 :- use_module(library(debug), [debug/3]).
 
+:- use_foreign_library(foreign(redis4pl)).
+
 /** <module> Redis client
 
 This library is a client  to   [Redis](https://redis.io),  a popular key
@@ -171,8 +173,6 @@ redis_connect(Address, Conn, Options) :-
 
 do_connect(Address, Conn, Options) :-
     tcp_connect(Address, Stream, Options),
-    stream_pair(Stream, _In, Out),
-    set_stream(Out, encoding(utf8)),
     Conn = redis(Stream),
     auth(Conn, Options).
 
@@ -278,10 +278,9 @@ redis(Redis, Req, Out) :-
 
 redis1(Redis, Req, Out) :-
     redis_stream(Redis, S, true),
-    gpredis_build_cmd(Req, CmdOut),
     with_mutex(redis,
-               ( gpredis_write(S, CmdOut),
-                 gpredis_read(S, Out)
+               ( redis_write_msg(S, Req),
+                 redis_read_stream(S, Out)
                )),
     Out \== nil.
 
@@ -330,12 +329,11 @@ redis_cli(Req) :-
 
 redis_write(Redis, Command) :-
     redis_stream(Redis, S, true),
-    gpredis_build_cmd(Command, String),
-    gpredis_write(S, String).
+    redis_write_msg(S, Command).
 
 redis_read(Redis, Reply) :-
     redis_stream(Redis, S, true),
-    gpredis_read(S, Reply).
+    redis_read_stream(S, Reply).
 
 
 		 /*******************************
@@ -523,7 +521,7 @@ scan_pairs([Key,Value|T0], [Key-Value|T]) :-
 %!  redis_subscribe(+Redis, +Channels) is det.
 %!  redis_unsubscribe(+Redis, +Channels) is det.
 %
-%   Subscribe to one or more Redis  PUB/PUB channels. Multiple subscribe
+%   Subscribe to one or more Redis  PUB/SUB channels. Multiple subscribe
 %   and unsubscribe messages may be issued on the same Redis connection.
 %   The first thread that subscribes  on   a  channel blocks, forwarding
 %   events using broadcast/1 using the following message. Here `Channel`
@@ -553,8 +551,7 @@ scan_pairs([Key,Value|T0], [Key-Value|T]) :-
 redis_subscribe(Redis, Channels) :-
     redis_stream(Redis, S, true),
     Req =.. [subscribe|Channels],
-    gpredis_build_cmd(Req, CmdOut),
-    gpredis_write(S, CmdOut),
+    redis_write_msg(S, Req),
     maplist(register_subscription(S), Channels),
     (   listening(S, _Thread)
     ->  true
@@ -564,8 +561,7 @@ redis_subscribe(Redis, Channels) :-
 redis_unsubscribe(Redis, Channels) :-
     redis_stream(Redis, S, true),
     Req =.. [unsubscribe|Channels],
-    gpredis_build_cmd(Req, CmdOut),
-    gpredis_write(S, CmdOut),
+    redis_write_msg(S, Req),
     maplist(unregister_subscription(S), Channels).
 
 register_subscription(S, Channel) :-
@@ -593,7 +589,7 @@ redis_listen(Redis) :-
 redis_listen_loop(Redis) :-
     redis_stream(Redis, S, true),
     (   subscription(S, _)
-    ->  gpredis_read(S, Reply),
+    ->  redis_read_stream(S, Reply),
         redis_broadcast(Redis, Reply),
         redis_listen_loop(Redis)
     ;   true
@@ -616,14 +612,7 @@ redis_broadcast(Redis, Message) :-
 		 *          READ/WRITE		*
 		 *******************************/
 
-%!  gpredis_write(+SO, +String) is det.
-
-
-gpredis_write(SO,String) :-
-    write(SO, String),
-    flush_output(SO).
-
-%!  gpredis_read(+Stream, -Term) is det.
+%!  redis_read_stream(+Stream, -Term) is det.
 %
 %   Read a message from a Redis stream.  Term is one of
 %
@@ -636,8 +625,8 @@ gpredis_write(SO,String) :-
 %   If something goes wrong, the connection   is closed and an exception
 %   is raised.
 
-gpredis_read(SI, Out) :-
-    (   catch(gpredis_read_(SI, Out0), E, true)
+redis_read_stream(SI, Out) :-
+    (   catch(redis_read_msg(SI, Out0), E, true)
     ->  (   var(E)
         ->  Out = Out0
         ;   print_message(error, E),
@@ -648,135 +637,12 @@ gpredis_read(SI, Out) :-
         throw(error(redis_error(protocol), _))
     ).
 
-gpredis_read_(SI, Out) :-
-    get_char(SI, ReplyMode),
-    gpredis_read(ReplyMode, SI, Out).
 
-gpredis_read(-, SI, Out) :-
-    gpredis_get_line(SI, Out),
-    format(atom(Err), '~s', [Out]),
-    throw(error(redis_error(Err), _)).
-gpredis_read(+, SI, Out) :-
-    gpredis_get_line(SI, Out2),
-    gpredis_wrap_as(status, Out2, Out).
-gpredis_read(:, SI, Out) :-
-    gpredis_read_number(SI, Out).
-gpredis_read($, SI, Out) :-
-    gpredis_read_number(SI, Length),
-    gpredis_read_bulk(SI, Length, Out).
-gpredis_read(*, SI, Out) :-
-    gpredis_read_number(SI, Length),
-    gpredis_mbulk_reply(SI, Length, Out).
-gpredis_read(end_of_file, _, _) :-
-    throw(error(socket_error(end_of_file, 'Unexpected end of file'),_)).
-
-gpredis_mbulk_reply(_, -1, nil).
-gpredis_mbulk_reply(_, 0, []) :-
-    !.
-gpredis_mbulk_reply(SI, N, [H|T]) :-
-    get_char(SI, ReplyMode),
-    gpredis_read(ReplyMode, SI, H),
-    N1 is N-1,
-    gpredis_mbulk_reply(SI, N1, T).
-
-gpredis_read_number(SI, N) :-
-    gpredis_get_line(SI, Line),
-    number_string(N, Line).
-
-gpredis_crlf(SI) :-
-    get_code(SI,13),
-    get_code(SI,10),
-    !.
-gpredis_crlf(SI) :-
-    throw(error(redis_protocol_error(SI, crlf_expected), _)).
-
-gpredis_read_bulk(_, -1, nil) :-
-    !.
-gpredis_read_bulk(SI, Len, Value) :-
-    stream_pair(SI, In, _Out),
-    setup_call_cleanup(
-        stream_range_open(In, Range, [size(Len)]),
-        ( set_stream(Range, encoding(utf8)),
-          read_string(Range, _, String)
-        ),
-        close(Range)),
-    gpredis_crlf(SI),
-    unstringify(String, Value).
-
-gpredis_get_line(SI, Line) :-
-    read_string(SI, "\n", "\r", _Sep, Line).
-
-gpredis_wrap_as(_, nil, Out) :-
-    !,
-    Out = nil.
-gpredis_wrap_as(Type, Value, Out) :-
-    Out =.. [Type, Value].
-
-
-%!  gpredis_build_cmd(+Command, -String) is det.
+%!  redis_read_msg(+Stream, -Message) is det.
+%!  redis_write_msg(+Stream, +Message) is det.
 %
-%   Building a redis command is very simple...   Req is a term whose
-%   functor name is the name of the  redis command and the arguments
-%   are the command  arguments,  some   examples  should  paint  the
-%   picture:
-%
-%     - gpredis_build_cmd(info).
-%     - gpredis_build_cmd(info(clients)).
-%     - gpredis_build_cmd(keys(*)).
-%     - gpredis_build_cmd(keys('users:*')).
-%     - gpredis_build_cmd(set("users:eric:logged_in", 1)).
-%
-%   Of course, you can substitute  *instantiated variables* anywhere
-%   in the above to pass through the   current  value as part of the
-%   outgoing command.
-
-gpredis_build_cmd(Req, X) :-
-    Req =.. [Cmd|Args],
-    gpredis_cmdargs([Cmd|Args], Args2),
-    atomics_to_string(Args2, CmdData),
-    length(Args, N),
-    NArgs is N+1,
-    format(string(X), '*~d\r\n~s', [NArgs, CmdData]).
-
-gpredis_cmdargs([], []).
-gpredis_cmdargs([Arg|Args], [ArgLen, "\r\n", X, "\r\n" | Output]) :-
-    gpredis_stringify(Arg, X),
-    utf_string_length(X, XLen),
-    format(string(ArgLen), "$~d", [XLen]),
-    gpredis_cmdargs(Args, Output).
-
-gpredis_stringify(X,Y) :-
-    string(X),
-    !,
-    X = Y.
-gpredis_stringify(X,Y) :-
-    atom(X),
-    !,
-    X = Y.
-gpredis_stringify(X, Y) :-
-    compound(X),
-    X = prolog(V),
-    !,
-    format(string(Y), '\u0000T\u0000~k', [V]).
-gpredis_stringify(X,Y) :-
-    !,
-    format(string(Y), '~w', [X]).
-
-unstringify(S, V) :-
-    string_concat('\u0000T\u0000', S1, S),
-    term_string(V0, S1),
-    !,
-    V = V0.
-unstringify(S, S).
-
-utf_string_length(S, Len) :-
-    setup_call_cleanup(
-        open_null_stream(Out),
-        (   write(Out, S),
-            byte_count(Out, Len)
-        ),
-        close(Out)).
-
+%   Read/write a Redis message. Both these predicates are in the foreign
+%   module `redis4pl`.
 
 
 

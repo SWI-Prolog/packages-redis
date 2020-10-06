@@ -6,6 +6,9 @@ include("../cmake/PrologPackage.cmake")
 swipl_plugin(redis
 	     PL_LIBS redis.pl)
 
+swipl_plugin(redis4pl
+	     C_SOURCES redis4pl.c)
+
 pkg_doc(redis
 	SECTION
 	SOURCE redis.pl libredis.tex)
