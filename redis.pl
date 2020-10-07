@@ -1,21 +1,42 @@
-/*
-    FILE: gpredis.pl
-    DATE: Nov 2013
-    DOES: Provides a simple Redis client for GNU Prolog using only Prolog
-    WHOM: Sean Charles  <sean at objitsu dot com>
+/*  Part of SWI-Prolog
 
-    This program provides a simple Redis client. It does not allow for any
-    persistent connection behaviours so pub/sub etc is not possible (yet).
+    Author:        Jan Wielemaker and Sean Charles
+    E-mail:        jan@swi-prolog.org and <sean at objitsu dot com>
+    WWW:           http://www.swi-prolog.org
+    Copyright (c)  2013-2020, Sean Charles
+                              SWI-Prolog Solutions b.v.
+    All rights reserved.
 
-    All other commands are supported using a simple form whereby a functor
-    name makes the first part of the command and the arguments are then added
-    as the remaining Redis command.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
 
-    Please read the test scripts for full examples on how to use.
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
 
-    BUGS/IDEAS: Please submit to the email address shown above.
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in
+       the documentation and/or other materials provided with the
+       distribution.
 
-    LICENCE: MIT, see the LICENCE file.
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+    FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+    BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+    ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    NOTE
+
+    The original code was subject to the MIT licence and written by
+    Sean Charles.  Re-licenced to standard SWI-Prolog BSD-2 with
+    permission from Sean Charles.
 */
 
 :- module(redis,
