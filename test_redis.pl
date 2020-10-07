@@ -132,6 +132,12 @@ test(counting_bits_in_a_string, Count == 4) :-
     run([ set('bitbucket(!)', 'U'),
           bitcount('bitbucket(!)') - Count
         ], ['bitbucket(!)']).
+test(get_and_set_unicode, Reply == S) :-
+    numlist(0, 10000, L),
+    string_codes(S, L),
+    run([ set(test_string, S) - status("OK"),
+          get(test_string) - Reply
+        ], [test_string]).
 
 :- end_tests(redis_strings).
 
