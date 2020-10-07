@@ -36,72 +36,16 @@
 #include <SWI-Prolog.h>
 #include <assert.h>
 #include <string.h>
+#include <math.h>
 
 static int protocol_error(IOSTREAM *in);
 
 static atom_t ATOM_rnil;
 static functor_t FUNCTOR_status1;
 static functor_t FUNCTOR_prolog1;
+static functor_t FUNCTOR_pair2;
+static functor_t FUNCTOR_attrib2;
 
-#define utf8_put_char(out, chr) \
-	((chr) < 0x80 ? out[0]=(char)(chr), out+1 \
-		      : _utf8_put_char(out, (chr)))
-
-
-static char *
-_utf8_put_char(char *out, int chr)
-{ if ( chr < 0x80 )
-  { *out++ = chr;
-  } else if ( chr < 0x800 )
-  { *out++ = 0xc0|((chr>>6)&0x1f);
-    *out++ = 0x80|(chr&0x3f);
-  } else if ( chr < 0x10000 )
-  { *out++ = 0xe0|((chr>>12)&0x0f);
-    *out++ = 0x80|((chr>>6)&0x3f);
-    *out++ = 0x80|(chr&0x3f);
-  } else if ( chr < 0x200000 )
-  { *out++ = 0xf0|((chr>>18)&0x07);
-    *out++ = 0x80|((chr>>12)&0x3f);
-    *out++ = 0x80|((chr>>6)&0x3f);
-    *out++ = 0x80|(chr&0x3f);
-  } else if ( chr < 0x4000000 )
-  { *out++ = 0xf8|((chr>>24)&0x03);
-    *out++ = 0x80|((chr>>18)&0x3f);
-    *out++ = 0x80|((chr>>12)&0x3f);
-    *out++ = 0x80|((chr>>6)&0x3f);
-    *out++ = 0x80|(chr&0x3f);
-  } else if ( (unsigned)chr < 0x80000000 )
-  { *out++ = 0xfc|((chr>>30)&0x01);
-    *out++ = 0x80|((chr>>24)&0x3f);
-    *out++ = 0x80|((chr>>18)&0x3f);
-    *out++ = 0x80|((chr>>12)&0x3f);
-    *out++ = 0x80|((chr>>6)&0x3f);
-    *out++ = 0x80|(chr&0x3f);
-  }
-
-  return out;
-}
-
-
-static int
-utf8_len(int chr)
-{ if ( chr < 0x80 )
-  { return 1;
-  } else if ( chr < 0x800 )
-  { return 2;
-  } else if ( chr < 0x10000 )
-  { return 3;
-  } else if ( chr < 0x200000 )
-  { return 4;
-  } else if ( chr < 0x4000000 )
-  { return 5;
-  } else if ( (unsigned)chr < 0x80000000 )
-  { return 6;
-  }
-
-  assert(0);
-  return 1;
-}
 
 		 /*******************************
 		 *	     CHAR BUF		*
@@ -163,19 +107,16 @@ ensure_space_charbuf(charbuf *cb, size_t space)
 }
 
 static int
-add_utf8_charbuf(charbuf *cb, int c)
-{ if ( ensure_space_charbuf(cb, 6) )
-  { if ( c < 0x80 )
-    { *cb->here++ = c;
-    } else
-    { cb->here = utf8_put_char(cb->here, c);
-    }
+add_byte_charbuf(charbuf *cb, int c)
+{ if ( ensure_space_charbuf(cb, 1) )
+  { *cb->here++ = c;
 
     return TRUE;
   }
 
   return FALSE;
 }
+
 
 		 /*******************************
 		 *	  READ PRIMITIVES	*
@@ -189,17 +130,17 @@ read_line(IOSTREAM *in, charbuf *cb)
     if ( c == -1 )
       return protocol_error(in),NULL;
     if ( c == '\r' )
-    { add_utf8_charbuf(cb, 0);
+    { add_byte_charbuf(cb, 0);
       if ( Sgetcode(in) != '\n' )
 	return protocol_error(in),NULL;
       return cb->base;
     }
     if ( c == '\n' )
-    { add_utf8_charbuf(cb, 0);
+    { add_byte_charbuf(cb, 0);
       return cb->base;
     }
 
-    add_utf8_charbuf(cb, c);
+    add_byte_charbuf(cb, c);
   }
 }
 
@@ -214,21 +155,31 @@ protocol_error(IOSTREAM *in)
 }
 
 static int
-redis_error(char *s)
-{ term_t t = PL_new_term_ref();
+redis_error(char *s, term_t msg)
+{ term_t code;
+  char *q;
 
-  return ( (t = PL_new_term_ref()) &&
-	   PL_unify_term(t,
+  for(q=s; *q >= 'A' && *q <= 'Z'; q++)
+    *q = *q + 'a' - 'A';
+
+  return ( (code = PL_new_term_ref()) &&
+	   PL_unify_chars(code, PL_ATOM, q-s, s) &&
+	   PL_unify_term(msg,
 			 PL_FUNCTOR_CHARS, "error", 2,
-			   PL_FUNCTOR_CHARS, "redis_error", 1,
-			     PL_UTF8_STRING, s,
-			   PL_VARIABLE) &&
-	   PL_raise_exception(t) );
+			   PL_FUNCTOR_CHARS, "redis_error", 2,
+			     PL_TERM, code,
+			     PL_STRING, q+1,
+			   PL_VARIABLE) );
 }
 
 		 /*******************************
 		 *	   READ MESSAGE		*
 		 *******************************/
+
+static int redis_read_stream(IOSTREAM *in, term_t message, term_t push);
+
+#define LEN_STREAM (-2)
+#define MSG_END    (-2)
 
 static int
 read_number(IOSTREAM *in, charbuf *cb, long long *vp)
@@ -246,7 +197,236 @@ read_number(IOSTREAM *in, charbuf *cb, long long *vp)
 }
 
 static int
-redis_read_stream(IOSTREAM *in, term_t message)
+read_length(IOSTREAM *in, charbuf *cb, long long *vp)
+{ char *s;
+
+  if ( !(s=read_line(in, cb)) )
+    return FALSE;
+  if ( cb->base[0] == '?' )
+  { *vp = LEN_STREAM;
+  } else
+  { long long v;
+    char *end;
+
+    v = strtoll(s, &end, 10);
+    if ( *end )
+      return protocol_error(in);
+    *vp = v;
+  }
+
+  return TRUE;
+}
+
+static int
+read_double(IOSTREAM *in, charbuf *cb, double *vp)
+{ double v;
+  char *s, *end;
+
+  if ( !(s=read_line(in, cb)) )
+    return FALSE;
+
+  if ( cb->here-cb->base == 3 &&
+       strncmp(cb->here, "inf", 3) == 0 )
+  { v = INFINITY;
+  } else if ( cb->here-cb->base == 4 &&
+	      strncmp(cb->here, "-inf", 4) == 0 )
+  { v = -INFINITY;
+  } else
+  { v = strtod(s, &end);
+    if ( *end )
+      return protocol_error(in);
+  }
+
+  *vp = v;
+
+  return TRUE;
+}
+
+
+static int
+expect_crlf(IOSTREAM *in)
+{ int c;
+
+  if ( (c=Sgetcode(in)) == '\r' )
+  { if ( Sgetcode(in) != '\n' )
+      return protocol_error(in);
+  } else if ( c != '\n' )
+  { return protocol_error(in);
+  }
+
+  return TRUE;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Returns: FALSE --> error, TRUE: bulk in cb, -1: got nil.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static int
+read_chunk(IOSTREAM *in, charbuf *cb, long long len)
+{ long long i;
+
+  for(i=0; i<len; i++)
+  { int c;
+
+    if ( (c=Sgetc(in)) == -1 )
+      return protocol_error(in);
+
+    if ( !add_byte_charbuf(cb, c) )
+      return FALSE;
+  }
+  if ( i != len )
+    return protocol_error(in);
+  if ( !expect_crlf(in) )
+    return protocol_error(in);
+
+  return TRUE;
+}
+
+
+static int
+read_bulk(IOSTREAM *in, charbuf *cb)
+{ long long v;
+
+  if ( !(read_length(in, cb, &v)) )
+    return FALSE;
+
+  if ( v == LEN_STREAM )		/* RESP3 Streamed string */
+  { charbuf nbuf;
+
+    init_charbuf(&nbuf);
+    empty_charbuf(cb);
+
+    for(;;)
+    { long long chlen;
+
+      if ( Sgetc(in) != ';' )
+	return protocol_error(in);
+      empty_charbuf(&nbuf);
+      if ( !read_number(in, &nbuf, &chlen) )
+	return protocol_error(in);
+      if ( chlen == 0 )
+      { return TRUE;
+      } else
+      { if ( !read_chunk(in, cb, chlen) )
+	  return FALSE;
+      }
+    }
+  } else
+  { if ( v == -1 )
+      return -1;			/* RESP2 nil */
+
+    empty_charbuf(cb);
+    return read_chunk(in, cb, v);
+  }
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Read a map to a pair  list.  Possibly   we  should  force all keys to be
+acceptable for a dict and return a dict?
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+static int
+read_map(IOSTREAM *in, charbuf *cb, term_t map)
+{ long long v;
+
+  if ( !read_length(in, cb, &v) )
+    return FALSE;
+
+  if ( v == LEN_STREAM )
+  { term_t head = PL_new_term_ref();
+    term_t tail = PL_copy_term_ref(map);
+    term_t pav  = PL_new_term_refs(2);
+
+    for(;;)
+    { int rc;
+
+      if ( !PL_put_variable(pav+0) ||
+	   !(rc=redis_read_stream(in, pav+0, 0)) )
+	return FALSE;
+      if ( rc == MSG_END )
+	break;
+      if ( !PL_unify_list(tail, head, tail) ||
+	   !PL_put_variable(pav+1) ||
+	   !redis_read_stream(in, pav+1, 0) ||
+	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
+			          PL_TERM, pav+0, PL_TERM, pav+1) )
+	return FALSE;
+    }
+
+    return PL_unify_nil(tail);
+  } else
+  { term_t head = PL_new_term_ref();
+    term_t tail = PL_copy_term_ref(map);
+    term_t pav  = PL_new_term_refs(2);
+    long long i;
+
+    if ( v == -1 )			/* Can this happen? */
+      return PL_unify_atom(map, ATOM_rnil);
+
+    for(i=0; i<v; i += 2)
+    { if ( !PL_unify_list(tail, head, tail) ||
+	   !PL_put_variable(pav+0) ||
+	   !PL_put_variable(pav+1) ||
+	   !redis_read_stream(in, pav+0, 0) ||
+	   !redis_read_stream(in, pav+1, 0) ||
+	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
+			          PL_TERM, pav+0, PL_TERM, pav+1) )
+	return FALSE;
+    }
+
+    return PL_unify_nil(tail);
+  }
+}
+
+
+static int
+read_array(IOSTREAM *in, charbuf *cb, term_t array)
+{ long long v;
+
+  if ( !read_length(in, cb, &v) )
+    return FALSE;
+
+  if ( v == LEN_STREAM )
+  { term_t head = PL_new_term_ref();
+    term_t tail = PL_copy_term_ref(array);
+    term_t tmp  = PL_new_term_ref();
+
+    for(;;)
+    { int rc;
+
+      if ( !(rc=redis_read_stream(in, tmp, 0)) )
+	return FALSE;
+      if ( rc == MSG_END )
+	break;
+      if ( !PL_unify_list(tail, head, tail) ||
+	   !PL_unify(head, tmp) )
+	return FALSE;
+    }
+
+    return PL_unify_nil(tail);
+  } else
+  { term_t head = PL_new_term_ref();
+    term_t tail = PL_copy_term_ref(array);
+    long long i;
+
+    if ( v == -1 )
+      return PL_unify_atom(array, ATOM_rnil);
+
+    for(i=0; i<v; i++)
+    { if ( !PL_unify_list(tail, head, tail) ||
+	   !redis_read_stream(in, head, 0) )
+	return FALSE;
+    }
+
+    return PL_unify_nil(tail);
+  }
+}
+
+
+static int
+redis_read_stream(IOSTREAM *in, term_t message, term_t push)
 { int rc = TRUE;
   int c0 = Sgetcode(in);
   charbuf cb;
@@ -258,7 +438,13 @@ redis_read_stream(IOSTREAM *in, term_t message)
       if ( !(s=read_line(in, &cb)) )
 	rc = FALSE;
       else
-	rc = redis_error(s);
+	rc = redis_error(s, message);
+      break;
+    case '!':				/* RESP3 Blob error */
+      if ( (rc=read_bulk(in, &cb)) )
+      { assert(rc != -1);
+	rc = redis_error(cb.base, message);
+      }
       break;
     case '+':
       if ( !(s=read_line(in, &cb)) )
@@ -276,112 +462,136 @@ redis_read_stream(IOSTREAM *in, term_t message)
 
       break;
     }
-    case '$':
-    { long long v;
+    case ',':				/* RESP3 double response */
+    { double v;
 
-      if ( (rc=read_number(in, &cb, &v)) )
-      { long long i;
-	int c;
+      rc = ( read_double(in, &cb, &v) &&
+	     PL_unify_float(message, v) );
 
-	if ( v == -1 )
-	{ rc = PL_unify_atom(message, ATOM_rnil);
-	  goto out;
-	}
+      break;
+    }
+    case '(':				/* RESP3 Big number */
+    { if ( !(s=read_line(in, &cb)) )
+      { rc = FALSE;
+      } else
+      { term_t t;
 
-	empty_charbuf(&cb);
-	for(i=0; i<v;)
-	{ if ( (c=Sgetcode(in)) == -1 )
-	  { rc = protocol_error(in);
-	    goto out;
-	  }
+	rc = ( (t=PL_new_term_ref()) &&
+	       PL_put_term_from_chars(t, REP_ISO_LATIN_1,
+				      cb.here-cb.base, cb.base) &&
+	       PL_unify(message, t) &&
+	       (PL_reset_term_refs(t),TRUE) );
+      }
+      break;
+    }
+    case '#':				/* RESP3 boolean */
+    { int c = Sgetcode(in);
 
-	  if ( !(rc=add_utf8_charbuf(&cb, c)) )
-	    goto out;
-
-	  i += utf8_len(c);
-	}
-	if ( i != v )
+      if ( (rc=expect_crlf(in)) )
+      { if ( c == 't' || c == 'f' )
+	  rc = PL_unify_bool(message, (c == 't'));
+	else
 	  rc = protocol_error(in);
-	if ( (c=Sgetcode(in)) == '\r' )
-	{ if ( Sgetcode(in) != '\n' )
-	  { rc = protocol_error(in);
-	    goto out;
-	  }
-	} else if ( c != '\n' )
-	{ rc = protocol_error(in);
-	  goto out;
-	}
+      }
+      break;
+    }
+    case '$':
+    { if ( (rc=read_bulk(in, &cb)) )
+      { if ( rc == -1 )
+	{ rc = PL_unify_atom(message, ATOM_rnil);
+	} else
+	{ if ( cb.here-cb.base > 3 &&
+	       cb.base[0] == '\0' &&
+	       cb.base[2] == '\0' )
+	  { switch(cb.base[1])
+	    { case 'T':
+	      { term_t t;
 
-	if ( cb.here-cb.base > 3 &&
-	     cb.base[0] == '\0' &&
-	     cb.base[2] == '\0' )
-	{ switch(cb.base[1])
-	  { case 'T':
-	    { term_t t;
-
-	      rc = ( (t=PL_new_term_ref()) &&
-		     PL_put_term_from_chars(t, REP_UTF8,
-					    cb.here-cb.base-3, cb.base+3) &&
-		     PL_unify(message, t) &&
-		     (PL_reset_term_refs(t),TRUE) );
-	      goto done_bulk;
+		rc = ( (t=PL_new_term_ref()) &&
+		       PL_put_term_from_chars(t, REP_UTF8,
+					      cb.here-cb.base-3, cb.base+3) &&
+		       PL_unify(message, t) &&
+		       (PL_reset_term_refs(t),TRUE) );
+		goto done_bulk;
+	      }
 	    }
 	  }
-	}
 
-	rc = PL_unify_chars(message, PL_STRING|REP_UTF8,
-			    cb.here-cb.base, cb.base);
+	  rc = PL_unify_chars(message, PL_STRING|REP_UTF8,
+			      cb.here-cb.base, cb.base);
+	}
       }
 
     done_bulk:
       break;
     }
-    case '*':
-    { long long v;
-
-      if ( (rc=read_number(in, &cb, &v)) )
-      { term_t head = PL_new_term_ref();
-	term_t tail = PL_copy_term_ref(message);
-	long long i;
-
-	if ( v == -1 )
-	{ rc = PL_unify_atom(message, ATOM_rnil);
-	  goto out;
-	}
-
-	for(i=0; i<v; i++)
-	{ if ( !PL_unify_list(tail, head, tail) ||
-	       !redis_read_stream(in, head) )
-	  { rc = FALSE;
-	    goto out;
-	  }
-	}
-
-	rc = PL_unify_nil(tail);
+    case '=':				/* RESP3 Verbatim string */
+    { if ( (rc=read_bulk(in, &cb)) )
+      { rc = PL_unify_chars(message, PL_STRING|REP_UTF8,
+			    cb.here-cb.base-4, cb.base+4);
       }
 
       break;
     }
+    case '~':				/* RESP3 set */
+    case '*':				/* Array */
+    { rc = read_array(in, &cb, message);
+      break;
+    }
+    case '>':				/* RESP3 push */
+    { term_t t;
+
+      rc = ( push != 0 &&		/* only on toplevel term */
+	     (t=PL_new_term_ref()) &&
+	     PL_unify_list(push, t, push) &&
+	     read_array(in, &cb, t) &&
+	     (PL_reset_term_refs(t),TRUE) );
+      break;
+    }
+    case '|':				/* RESP3 attrib */
+    { term_t attrib = PL_new_term_ref();
+      term_t msg    = PL_new_term_ref();
+
+      rc = ( read_map(in, &cb, attrib) &&
+	     read_map(in, &cb, msg) &&
+	     PL_unify_term(message, PL_FUNCTOR, FUNCTOR_attrib2,
+				      PL_TERM, attrib, PL_TERM, msg) );
+      break;
+    }
+    case '%':				/* RESP3 map */
+    { rc = read_map(in, &cb, message);
+      break;
+    }
+    case '_':				/* RESP3 nil */
+      rc = ( expect_crlf(in) &&
+	     PL_unify_atom(message, ATOM_rnil) );
+      break;
+    case '.':
+      if ( push == 0 && expect_crlf(in) )
+	rc = MSG_END;
+      else
+	rc = protocol_error(in);
+      break;
     default:
       rc = protocol_error(in);
       break;
   }
 
-out:
   free_charbuf(&cb);
 
   return rc;
 }
 
 static foreign_t
-redis_read_msg(term_t from, term_t message)
+redis_read_msg(term_t from, term_t message, term_t push)
 { IOSTREAM *in;
 
   if ( PL_get_stream(from, &in, SIO_INPUT) )
-  { IOENC enc = in->encoding;
-    in->encoding = ENC_UTF8;
-    int rc = redis_read_stream(in, message);
-    in->encoding = enc;
+  { term_t tail = PL_copy_term_ref(push);
+    int rc;
+
+    rc = ( redis_read_stream(in, message, tail) &&
+	   PL_unify_nil(tail) );
 
     if ( rc )
       rc = PL_release_stream(in);
@@ -515,10 +725,12 @@ redis_write_msg(term_t into, term_t message)
 
 install_t
 install_redis4pl(void)
-{ ATOM_rnil = PL_new_atom("nil");
+{ ATOM_rnil       = PL_new_atom("nil");
+  FUNCTOR_pair2   = PL_new_functor(PL_new_atom("-"), 2);
+  FUNCTOR_attrib2 = PL_new_functor(PL_new_atom("$REDISATTRIB$"), 2);
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);
 
-  PL_register_foreign("redis_read_msg",  2, redis_read_msg,  0);
+  PL_register_foreign("redis_read_msg",  3, redis_read_msg,  0);
   PL_register_foreign("redis_write_msg", 2, redis_write_msg, 0);
 }

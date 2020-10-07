@@ -647,17 +647,16 @@ redis_broadcast(Redis, Message) :-
 %   is raised.
 
 redis_read_stream(SI, Out) :-
-    (   catch(redis_read_msg(SI, Out0), E, true)
-    ->  (   var(E)
-        ->  Out = Out0
-        ;   print_message(error, E),
-            disconnect_stream(SI),
-            throw(error(redis_error(protocol), _))
+    catch(redis_read_msg(SI, Out0, _Push), E, true),
+    (   var(E)
+    ->  (   functor(Out0, error, 2)
+        ->  throw(Out0)
+        ;   Out = Out0
         )
-    ;   disconnect_stream(SI),
-        throw(error(redis_error(protocol), _))
+    ;   print_message(error, E),
+        disconnect_stream(SI),
+        throw(E)
     ).
-
 
 %!  redis_read_msg(+Stream, -Message) is det.
 %!  redis_write_msg(+Stream, +Message) is det.
@@ -674,5 +673,5 @@ redis_read_stream(SI, Out) :-
 :- multifile
     prolog:error_message//1.
 
-prolog:error_message(redis_error(String)) -->
-    [ 'REDIS: ~s'-[String] ].
+prolog:error_message(redis_error(Code, String)) -->
+    [ 'REDIS: ~w: ~s'-[Code, String] ].
