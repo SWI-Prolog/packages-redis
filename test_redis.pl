@@ -33,7 +33,8 @@
 */
 
 :- module(test_redis,
-          [ test_redis/0
+          [ test_redis/0,
+            test_redis/1                % +Options
           ]).
 :- use_module(library(plunit)).
 :- use_module(library(redis)).
@@ -46,22 +47,54 @@ These tests are for a  large  part  based   on  the  test  suite for the
 GNU-Prolog redis client by Sean Charles.
 */
 
+:- dynamic
+    resp/1.
+
+%!  test_redis
+%
+%   Run the Redis tests.  These  are  only   executed  if  there  is  an
+%   environment variable ``SWIPL_REDIS_SERVER`` with value <host>:<port>
+%   For successful execution there must be a  Redis server that does not
+%   require a password at this location. If this server supports version
+%   3 of the Redis protocol the tests   are  executed in version 3 mode.
+%   Otherwise in version 2 mode.
+
 test_redis :-
-    getenv('SWIPL_REDIS_SERVER', Server),
-    split_string(Server, ":", "", [HostS,PortS]),
-    atom_string(Host, HostS),
-    number_string(Port, PortS),
-    !,
-    redis_server(test_redis, Host:Port, []),
+    retractall(resp(_)),
+    redis_server_address(Address), !,
+    (   hello_at(Address)
+    ->  test_redis([version(3)])
+    ;   test_redis([])
+    ).
+test_redis :-
+    print_message(informational,
+                  test_redis(no_server)).
+
+test_redis(Options) :-
+    redis_server_address(Address),
+    redis_server(test_redis, Address, Options),
+    option(version(V), Options, 2),
+    retractall(resp(_)),
+    asserta(resp(V)),
     run_tests([ redis_operation,
                 redis_strings,
                 redis_lists,
                 redis_hashes,
                 redis_prolog
               ]).
-test_redis :-
-    print_message(informational,
-                  test_redis(no_server)).
+
+redis_server_address(Host:Port) :-
+    getenv('SWIPL_REDIS_SERVER', Server),
+    split_string(Server, ":", "", [HostS,PortS]),
+    atom_string(Host, HostS),
+    number_string(Port, PortS).
+
+hello_at(Address) :-
+    setup_call_cleanup(
+        redis_connect(Address, C, []),
+        redis_current_command(C, hello),
+        redis_disconnect(C)).
+
 
 :- begin_tests(redis_operation).
 
@@ -75,10 +108,14 @@ test(set_and_get_client_name, Client == "Objitsu") :-
     run([ client(setname, "Objitsu"),
           client(getname) - Client
         ], []).
-test(set_and_get_timeout, Reply == ["timeout", "86400"]) :-
+test(set_and_get_timeout, Reply == OK) :-
     run([ config(set, timeout, 86400),
           config(get, timeout) - Reply
-        ], []).
+        ], []),
+    (   resp(2)
+    ->  OK = ["timeout", "86400"]
+    ;   OK = ["timeout"-"86400"]
+    ).
 test(dbsize, Val == "Hello") :-
     run([ dbsize - Size1,
           set(test_key_1, "Hello"),
@@ -97,13 +134,23 @@ test(key_creation_exists_set_get_and_deletion) :-
           exists(test_key_1) - Exists2,
           assertion(Exists2 == 0)
         ], [test_key_1]).
-test(key_expiry_with_set_ttl_expire_and_exists) :-
+test(key_expiry_with_set_ttl_expire_and_exists, condition(resp(2))) :-
     run([ set(test_key_1, "Hello"),
           ttl(test_key_1) - Minus1,
           assertion(Minus1 == -1),
           expire(test_key_1, 1) - Set1,
           assertion(Set1 == 1),
           call(sleep(1.5)),
+          exists(test_key_1) - Exists0,
+          assertion(Exists0 == 0)
+        ], [test_key_1]).
+test(key_expiry_with_set_ttl_expire_and_exists, condition(resp(3))) :-
+    run([ set(test_key_1, "Hello"),
+          ttl(test_key_1) - Minus1,
+          assertion(Minus1 == -1),
+          pexpire(test_key_1, 100) - Set1,
+          assertion(Set1 == 1),
+          call(sleep(0.2)),
           exists(test_key_1) - Exists0,
           assertion(Exists0 == 0)
         ], [test_key_1]).
@@ -116,9 +163,14 @@ test(get_and_set, S == "Hello World") :-
     run([ set(test_string, 'Hello World') - status("OK"),
           get(test_string) - S
         ], [test_string]).
-test(set_and_get_with_expiry) :-
+test(set_and_get_with_expiry, condition(resp(2))) :-
     run([ set(test_string, 'Miller time!', ex, 1),
           call(sleep(1.5)),
+          \+ get(test_string) - _
+        ], [test_string]).
+test(set_and_get_with_expiry, condition(resp(3))) :-
+    run([ set(test_string, 'Miller time!', px, 100),
+          call(sleep(0.2)),
           \+ get(test_string) - _
         ], [test_string]).
 test(append_to_an_existing_string) :-
@@ -237,14 +289,18 @@ test(multiple_keys_at_once, List == ["Hello", "World", "42"]) :-
                new_field_3, 42) - 3,
           hmget(test_hash, new_field_1, new_field_2, new_field_3) - List
         ], [test_hash]).
-test(getting_all_hash_keys_at_once, Len == 6) :-
+test(getting_all_hash_keys_at_once, Len == OK) :-
     run([ hset(test_hash,
                new_field_1, "Hello",
                new_field_2, "World",
                new_field_3, 42) - 3,
           hgetall(test_hash) - List
         ], [test_hash]),
-    length(List, Len).
+    length(List, Len),
+    (   resp(2)
+    ->  OK = 6
+    ;   OK = 3
+    ).
 test(deleting_some_existing_fields) :-
     run([ hset(test_hash,
                name, 'Emacs The Viking',

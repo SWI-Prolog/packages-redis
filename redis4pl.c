@@ -365,7 +365,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
     if ( v == -1 )			/* Can this happen? */
       return PL_unify_atom(map, ATOM_rnil);
 
-    for(i=0; i<v; i += 2)
+    for(i=0; i<v; i++)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+0) ||
 	   !PL_put_variable(pav+1) ||

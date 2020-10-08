@@ -11,6 +11,9 @@ swipl_plugin(redis4pl
 
 pkg_doc(redis
 	SECTION
-	SOURCE redis.pl libredis.tex)
+	SOURCES
+	    overview.md
+	SOURCE
+	    redis.pl libredis.tex)
 
 test_libs(redis)

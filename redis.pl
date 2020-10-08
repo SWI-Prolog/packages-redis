@@ -40,34 +40,38 @@
 */
 
 :- module(redis,
-          [ redis_server/3,             % +Alias,+Address,+Options
+          [ redis_server/3,             % +Alias, +Address, +Options
             redis_connect/1,            % -Connection
             redis_connect/3,            % -Connection, +Host, +Port
             redis_disconnect/1,         % +Connection
-            redis_disconnect/2,         % +Connection,+Options
+            redis_disconnect/2,         % +Connection, +Options
                                         % Queries
             redis/1,                    % +Request
             redis/2,                    % +Connection, +Request
             redis/3,                    % +Connection, +Request, -Reply
             redis_cli/1,                % +Request
                                         % High level queries
-            redis_get_list/3,           % +Redis,+Key,-List
-            redis_get_list/4,           % +Redis,+Key,+ChunkSize,-List
-            redis_set_list/3,           % +Redis,+Key,+List
-            redis_get_hash/3,           % +Redis,+Key,-Data:dict
-            redis_set_hash/3,           % +Redis,+Key,+Data:dict
-            redis_scan/3,               % +Redis,-LazyList,+Options
-            redis_sscan/4,              % +Redis,+Set,-LazyList,+Options
-            redis_hscan/4,              % +Redis,+Hash,-LazyList,+Options
-            redis_zscan/4,              % +Redis,+Set,-LazyList,+Options
+            redis_get_list/3,           % +Redis, +Key, -List
+            redis_get_list/4,           % +Redis, +Key, +ChunkSize, -List
+            redis_set_list/3,           % +Redis, +Key, +List
+            redis_get_hash/3,           % +Redis, +Key, -Data:dict
+            redis_set_hash/3,           % +Redis, +Key, +Data:dict
+            redis_scan/3,               % +Redis, -LazyList, +Options
+            redis_sscan/4,              % +Redis, +Set, -LazyList, +Options
+            redis_hscan/4,              % +Redis, +Hash, -LazyList, +Options
+            redis_zscan/4,              % +Redis, +Set, -LazyList, +Options
                                         % Publish/Subscribe
             redis_subscribe/2,          % +Redis, +Channels
             redis_unsubscribe/2,        % +Redis, +Channels
-            redis_write/2,              % +Redis,+Command
-            redis_read/2                % +Redis,-Reply
+            redis_write/2,              % +Redis, +Command
+            redis_read/2,               % +Redis, -Reply
+                                        % Admin stuff
+            redis_property/2,           % +Reply, ?Property
+            redis_current_command/2,    % +Redis,?Command
+            redis_current_command/3     % +Redis, +Command, -Properties
           ]).
 :- autoload(library(socket), [tcp_connect/3]).
-:- autoload(library(apply), [maplist/2]).
+:- autoload(library(apply), [maplist/2, convlist/3]).
 :- autoload(library(broadcast), [broadcast/1]).
 :- autoload(library(error),
             [ must_be/2,
@@ -76,9 +80,8 @@
               permission_error/3
             ]).
 :- autoload(library(lazy_lists), [lazy_list/2]).
-:- autoload(library(lists), [append/3]).
+:- autoload(library(lists), [append/3, member/2]).
 :- autoload(library(option), [merge_options/3, option/2, option/3]).
-:- autoload(library(http/http_stream), [stream_range_open/3]).
 :- use_module(library(debug), [debug/3]).
 
 :- use_foreign_library(foreign(redis4pl)).
@@ -87,9 +90,7 @@
 
 This library is a client  to   [Redis](https://redis.io),  a popular key
 value store to  deal  with  caching   and  communication  between  micro
-services. This module is based on the   `gpredis.pl` by Sean Charles for
-GNU-Prolog. This file greatly helped  me   understanding  what had to be
-done, although, eventually, not much of the original interface is left.
+services.
 
 In the typical use case we register  the   details  of one or more Redis
 servers using redis_server/3. Subsequenly, redis/1-3   is  used to issue
@@ -101,20 +102,6 @@ commands on the server.  For example:
 ?- redis(get(user), User).
 User = "Bob"
 ```
-
-The main difference to the original client are:
-
-  - Replies are not wrapped by type in a compound term.
-  - String replies use the SWI-Prolog string type.
-  - Values can be specified as prolog(Value), after which they
-    are returns as a (copy of) Value.  This prefixes the value
-    using "\u0000T\u0000".
-  - Strings are in UTF-8 encoding to support full Unicode.
-  - Using redis_server/3, actual connections are established
-    lazily and when a connection is lost it is automatically
-    restarted.
-  - This library allows for using the Redis publish/subscribe
-    interface.  Messages are propagated using broadcast/1.
 */
 
 :- dynamic server/3.
@@ -150,12 +137,19 @@ server(default, localhost:6379, []).
 %   -Connection,   +Options).   redis_connect/1   is     equivalent   to
 %   redis_connect(localhost:6379, Connection, []).  Options:
 %
-%     - alias(Alias)
+%     - alias(+Alias)
 %       Make the connection globally available as Alias.
-%     - open(OpenMode)
+%     - open(+OpenMode)
 %       One of `once` (default if an alias is provided) or `multiple`.
+%     - user(+User)
+%       If version(3) and password(Password) are specified, these
+%       are used to authenticate using the `HELLO` command.
 %     - password(+Password)
 %       Authenticate using Password
+%     - version(+Version)
+%       Specify the connection protocol version.  Initially this is
+%       version 2.  Redis 6 also supports version 3.  When specified
+%       as `3`, the `HELLO` command is used to upgrade the protocol.
 %
 %   @compat   redis_connect(-Connection,   +Host,     +Port)    provides
 %   compatibility to the original GNU-Prolog interface and is equivalent
@@ -195,13 +189,27 @@ redis_connect(Address, Conn, Options) :-
 do_connect(Address, Conn, Options) :-
     tcp_connect(Address, Stream, Options),
     Conn = redis(Stream),
-    auth(Conn, Options).
+    hello(Conn, Options).
 
-auth(Con, Options) :-
+%!  hello(+Connection, +Option)
+%
+%   Initialize the connection. This is  used   to  upgrade  to the RESP3
+%   protocol and/or to authenticate.
+
+hello(Con, Options) :-
+    option(version(V), Options),
+    V >= 3,
+    !,
+    (   option(user(User), Options),
+        option(password(Password), Options)
+    ->  redis(Con, hello(3, auth, User, Password), _)
+    ;   redis(Con, hello(3), _)
+    ).
+hello(Con, Options) :-
     option(password(Password), Options),
     !,
-    redis(Con, auth(Password)).
-auth(_, _).
+    redis(Con, auth(Password), _).
+hello(_, _).
 
 redis_stream(Var, _, _) :-
     var(Var),
@@ -301,7 +309,7 @@ redis1(Redis, Req, Out) :-
     redis_stream(Redis, S, true),
     with_mutex(redis,
                ( redis_write_msg(S, Req),
-                 redis_read_stream(S, Out)
+                 redis_read_stream(Redis, S, Out)
                )),
     Out \== nil.
 
@@ -354,7 +362,7 @@ redis_write(Redis, Command) :-
 
 redis_read(Redis, Reply) :-
     redis_stream(Redis, S, true),
-    redis_read_stream(S, Reply).
+    redis_read_stream(Redis, S, Reply).
 
 
 		 /*******************************
@@ -443,7 +451,7 @@ redis_set_list(Redis, Key, List) :-
 
 redis_get_hash(Redis, Key, Dict) :-
     redis(Redis, hgetall(Key), TwoList),
-    pairs_2list(Pairs, TwoList),
+    list2_pairs(TwoList, Pairs),
     dict_pairs(Dict, _, Pairs).
 
 redis_set_hash(Redis, Key, Dict) :-
@@ -458,6 +466,16 @@ pairs_2list([], []) :-
 pairs_2list([Name-Value|T0], [NameS,Value|T]) :-
     atom_string(Name, NameS),
     pairs_2list(T0, T).
+
+list2_pairs([], []) :-
+    !.
+list2_pairs([NameS-Value|T0], [Name-Value|T]) :-
+    !,                                  % RESP3 returns a map as pairs.
+    atom_string(Name, NameS),
+    list2_pairs(T0, T).
+list2_pairs([NameS,Value|T0], [Name-Value|T]) :-
+    atom_string(Name, NameS),
+    list2_pairs(T0, T).
 
 %!  redis_scan(+Redis, -LazyList, +Options) is det.
 %!  redis_sscan(+Redis, -LazyList, +Options) is det.
@@ -536,6 +554,57 @@ scan_pairs([Key,Value|T0], [Key-Value|T]) :-
 
 
 		 /*******************************
+		 *              ABOUT		*
+		 *******************************/
+
+%!  redis_current_command(+Redis, ?Command) is nondet.
+%!  redis_current_command(+Redis, ?Command, -Properties) is nondet.
+%
+%   True when Command has Properties. Fails   if Command is not defined.
+%   The redis_current_command/3 version  returns   the  command argument
+%   specification. See Redis documentation for an explanation.
+
+redis_current_command(Redis, Command) :-
+    redis_current_command(Redis, Command, _).
+
+redis_current_command(Redis, Command, Properties) :-
+    nonvar(Command),
+    !,
+    redis(Redis, command(info, Command), [[_|Properties]]).
+redis_current_command(Redis, Command, Properties) :-
+    redis(Redis, command, Commands),
+    member([Name|Properties], Commands),
+    atom_string(Command, Name).
+
+%!  redis_property(+Redis, ?Property) is nondet.
+%
+%   True if Property is a property of   the Redis server. Currently uses
+%   redis(info, String) and parses the result.   As  this is for machine
+%   usage, properties names *_human are skipped.
+
+redis_property(Redis, Property) :-
+    redis(Redis, info, String),
+    info_terms(String, Terms),
+    member(Property, Terms).
+
+info_terms(Info, Pairs) :-
+    split_string(Info, "\n", "\r\n ", Lines),
+    convlist(info_line_term, Lines, Pairs).
+
+info_line_term(Line, Term) :-
+    sub_string(Line, B, _, A, :),
+    !,
+    sub_atom(Line, 0, B, _, Name),
+    \+ sub_atom(Name, _, _, 0, '_human'),
+    sub_string(Line, _, A, 0, ValueS),
+    (   number_string(Value, ValueS)
+    ->  true
+    ;   Value = ValueS
+    ),
+    Term =.. [Name,Value].
+
+
+		 /*******************************
 		 *            SUBSCRIBE		*
 		 *******************************/
 
@@ -610,7 +679,7 @@ redis_listen(Redis) :-
 redis_listen_loop(Redis) :-
     redis_stream(Redis, S, true),
     (   subscription(S, _)
-    ->  redis_read_stream(S, Reply),
+    ->  redis_read_stream(Redis, S, Reply),
         redis_broadcast(Redis, Reply),
         redis_listen_loop(Redis)
     ;   true
@@ -633,23 +702,26 @@ redis_broadcast(Redis, Message) :-
 		 *          READ/WRITE		*
 		 *******************************/
 
-%!  redis_read_stream(+Stream, -Term) is det.
+%!  redis_read_stream(+Redis, +Stream, -Term) is det.
 %
 %   Read a message from a Redis stream.  Term is one of
 %
-%     - A list of terms
+%     - A list of terms (array)
+%     - A list of pairs (map, RESP3 only)
 %     - The atom `nil`
 %     - A number
 %     - A term status(String)
 %     - A string
+%     - A boolean (`true` or `false`).  RESP3 only.
 %
 %   If something goes wrong, the connection   is closed and an exception
 %   is raised.
 
-redis_read_stream(SI, Out) :-
-    catch(redis_read_msg(SI, Out0, _Push), E, true),
+redis_read_stream(Redis, SI, Out) :-
+    catch(redis_read_msg(SI, Out0, Push), E, true),
     (   var(E)
-    ->  (   functor(Out0, error, 2)
+    ->  handle_push_messages(Push, Redis),
+        (   functor(Out0, error, 2)
         ->  throw(Out0)
         ;   Out = Out0
         )
@@ -658,11 +730,28 @@ redis_read_stream(SI, Out) :-
         throw(E)
     ).
 
-%!  redis_read_msg(+Stream, -Message) is det.
+handle_push_messages([], _).
+handle_push_messages([H|T], Redis) :-
+    (   catch(handle_push_message(H, Redis), E,
+              print_message(warning, E))
+    ->  true
+    ;   true
+    ),
+    handle_push_messages(T, Redis).
+
+handle_push_message(["pubsub"|List], Redis) :-
+    redis_broadcast(Redis, List).
+
+
+%!  redis_read_msg(+Stream, -Message, -PushMessages) is det.
 %!  redis_write_msg(+Stream, +Message) is det.
 %
 %   Read/write a Redis message. Both these predicates are in the foreign
 %   module `redis4pl`.
+%
+%   @arg PushMessages is a list of push   messages that may be non-[] if
+%   protocol version 3 (see redis_connect/3) is selected. Using protocol
+%   version 2 this list is always empty.
 
 
 
