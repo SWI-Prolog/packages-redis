@@ -234,7 +234,7 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
   } else
   { v = strtod(s, &end);
     if ( *end )
-      return protocol_error(in);
+      return protocol_error(in),FALSE;
   }
 
   *vp = v;
