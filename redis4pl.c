@@ -463,7 +463,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t push)
       break;
     }
     case ',':				/* RESP3 double response */
-    { double v;
+    { double v = 0.0;
 
       rc = ( read_double(in, &cb, &v) &&
 	     PL_unify_float(message, v) );
