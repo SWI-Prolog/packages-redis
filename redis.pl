@@ -143,6 +143,10 @@ server(default, localhost:6379, []).
 %       Make the connection globally available as Alias.
 %     - open(+OpenMode)
 %       One of `once` (default if an alias is provided) or `multiple`.
+%     - reconnect(+Boolean)
+%       If `true`, try to reconnect to the service when the connection
+%       seems lost.  Default is `true` for connections specified using
+%       redis_server/3 and `false` for explictly opened connections.
 %     - user(+User)
 %       If version(3) and password(Password) are specified, these
 %       are used to authenticate using the `HELLO` command.
@@ -174,23 +178,29 @@ redis_connect(Server, Conn, Options) :-
     server(Server, Address, DefaultOptions),
     !,
     merge_options(Options, DefaultOptions, Options2),
-    do_connect(Address, Conn, Options2).
+    do_connect(Server, Address, Conn, [address(Address)|Options2]).
 redis_connect(Address, Conn, Options) :-
     option(alias(Alias), Options),
     !,
     (   option(open(once), Options, once),
         connection(Alias, S)
-    ->  Conn = redis(S)
-    ;   do_connect(Address, Conn, Options),
-        Conn = redis(S),
+    ->  Conn = redis(Alias, S, Options)
+    ;   do_connect(Alias, Address, Conn, [address(Address)|Options]),
+        Conn = redis(_, S, _),
         asserta(connection(Alias, S))
     ).
 redis_connect(Address, Conn, Options) :-
-    do_connect(Address, Conn, Options).
+    do_connect(Address, Address, Conn, [address(Address)|Options]).
 
-do_connect(Address, Conn, Options) :-
+%!  do_connect(+Id, +Address, -Conn, +Options)
+%
+%   Open the connection.  A connection is a compound term of the shape
+%
+%       redis(Id, Stream, Options)
+
+do_connect(Id, Address, Conn, Options) :-
     tcp_connect(Address, Stream, Options),
-    Conn = redis(Stream),
+    Conn = redis(Id, Stream, Options),
     hello(Conn, Options).
 
 %!  hello(+Connection, +Option)
@@ -213,6 +223,12 @@ hello(Con, Options) :-
     redis(Con, auth(Password), _).
 hello(_, _).
 
+%!  redis_stream(+Spec, --Stream, +DoConnect) is det.
+%
+%   Get the stream to a Redis server from  Spec. Spec is either the name
+%   of a registered server ot a   term  redis(Id,Stream,Options). If the
+%   stream is disconnected it will be reconnected.
+
 redis_stream(Var, _, _) :-
     var(Var),
     !,
@@ -228,7 +244,15 @@ redis_stream(Alias, S, Connect) :-
         redis_stream(Connection, S, false)
     ;   existence_error(redis, Alias)
     ).
-redis_stream(redis(S), S, _).
+redis_stream(redis(_,S0,_), S, _) :-
+    S0 \== (-),
+    !,
+    S = S0.
+redis_stream(Redis, S, _) :-
+    Redis = redis(Id,-,Options),
+    option(address(Address), Options),
+    do_connect(Id,Address,redis(_,S,_),Options),
+    nb_setarg(2, Redis, S).
 
 has_redis_stream(Var, _) :-
     var(Var),
@@ -238,7 +262,7 @@ has_redis_stream(Alias, S) :-
     atom(Alias),
     !,
     connection(Alias, S).
-has_redis_stream(redis(S), S).
+has_redis_stream(redis(_,S,_), S).
 
 
 %!  redis_disconnect(+Connection) is det.
@@ -260,7 +284,13 @@ redis_disconnect(Redis) :-
 redis_disconnect(Redis, Options) :-
     option(force(true), Options),
     !,
-    (   has_redis_stream(Redis, S)
+    (   Redis = redis(_Id, S, _Opts)
+    ->  (   S == (-)
+        ->  true
+        ;   close(S, [force(true)]),
+            nb_setarg(2, Redis, -)
+        )
+    ;   has_redis_stream(Redis, S)
     ->  close(S, [force(true)]),
         retractall(connection(_,S))
     ;   true
@@ -268,10 +298,6 @@ redis_disconnect(Redis, Options) :-
 redis_disconnect(Redis, _Options) :-
     redis_stream(Redis, S, false),
     close(S),
-    retractall(connection(_,S)).
-
-disconnect_stream(S) :-
-    close(S, [force(true)]),
     retractall(connection(_,S)).
 
 
@@ -300,9 +326,9 @@ redis(Req, Out) :-
     redis(default, Req, Out).
 
 redis(Redis, Req, Out) :-
-    Error = error(socket_error(Which, _), _),
+    Error = error(Formal, _),
     catch(redis1(Redis, Req, Out), Error, true),
-    (   var(Which)
+    (   var(Formal)
     ->  true
     ;   recover(Error, Redis, Req, Out)
     ).
@@ -316,15 +342,28 @@ redis1(Redis, Req, Out) :-
     Out \== nil.
 
 recover(Error, Redis, Req, Out) :-
-    (   ground(Redis),
-        server(Redis, _, _)
-    ->  debug(redis(recover), 'Got error ~p; trying to reconnect', [Error]),
-        redis_disconnect(Redis, [force(true)]),
-        wait(Redis),
-        redis(Redis, Req, Out),
-        retractall(failure(Redis, _))
-    ;   throw(Error)
-    ).
+    reconnect_error(Error),
+    auto_reconnect(Redis),
+    !,
+    debug(redis(recover), '~p: got error ~p; trying to reconnect',
+          [Redis, Error]),
+    redis_disconnect(Redis, [force(true)]),
+    wait(Redis),
+    redis(Redis, Req, Out),
+    retractall(failure(Redis, _)).
+recover(Error, _, _, _) :-
+    throw(Error).
+
+auto_reconnect(redis(_,_,Options)) :-
+    !,
+    option(reconnect(true), Options).
+auto_reconnect(Server) :-
+    ground(Server),
+    server(Server, _, Options),
+    option(reconnect(true), Options, true).
+
+reconnect_error(error(socket_error(_Code, _),_)).
+reconnect_error(error(syntax_error(unexpected_eof),_)).
 
 :- dynamic failure/2 as volatile.
 
@@ -736,15 +775,18 @@ redis_broadcast(Redis, Message) :-
 %   is raised.
 
 redis_read_stream(Redis, SI, Out) :-
+    E = error(Formal,_),
     catch(redis_read_msg(SI, Out0, Push), E, true),
-    (   var(E)
+    (   var(Formal)
     ->  handle_push_messages(Push, Redis),
         (   functor(Out0, error, 2)
         ->  throw(Out0)
         ;   Out = Out0
         )
+    ;   Formal = redis_error(_Code, _Message)
+    ->  throw(E)
     ;   print_message(error, E),
-        disconnect_stream(SI),
+        redis_disconnect(Redis, [force(true)]),
         throw(E)
     ).
 
