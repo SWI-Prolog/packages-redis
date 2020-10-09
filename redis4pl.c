@@ -38,7 +38,9 @@
 #include <string.h>
 #include <math.h>
 
-static int protocol_error(IOSTREAM *in);
+static int protocol_error(IOSTREAM *in, const char *id);
+static int unexpected_eof(IOSTREAM *in);
+static int newline_expected(IOSTREAM *in);
 
 static atom_t ATOM_rnil;
 static functor_t FUNCTOR_status1;
@@ -128,11 +130,11 @@ read_line(IOSTREAM *in, charbuf *cb)
   { int c = Sgetcode(in);
 
     if ( c == -1 )
-      return protocol_error(in),NULL;
+      return unexpected_eof(in),NULL;
     if ( c == '\r' )
     { add_byte_charbuf(cb, 0);
       if ( Sgetcode(in) != '\n' )
-	return protocol_error(in),NULL;
+	return newline_expected(in),NULL;
       return cb->base;
     }
     if ( c == '\n' )
@@ -150,9 +152,21 @@ read_line(IOSTREAM *in, charbuf *cb)
 		 *******************************/
 
 static int
-protocol_error(IOSTREAM *in)
-{ return PL_syntax_error("redis protocol violation", in);
+protocol_error(IOSTREAM *in, const char *msg)
+{ return PL_syntax_error(msg, in);
 }
+
+static int
+unexpected_eof(IOSTREAM *in)
+{ return protocol_error(in, "unexpected_eof");
+}
+
+static int
+newline_expected(IOSTREAM *in)
+{ return protocol_error(in, "newline_expected");
+}
+
+
 
 static int
 redis_error(char *s, term_t msg)
@@ -190,7 +204,7 @@ read_number(IOSTREAM *in, charbuf *cb, long long *vp)
     return FALSE;
   v = strtoll(s, &end, 10);
   if ( *end )
-    return protocol_error(in);
+    return newline_expected(in);
   *vp = v;
 
   return TRUE;
@@ -210,7 +224,7 @@ read_length(IOSTREAM *in, charbuf *cb, long long *vp)
 
     v = strtoll(s, &end, 10);
     if ( *end )
-      return protocol_error(in);
+      return newline_expected(in);
     *vp = v;
   }
 
@@ -234,7 +248,7 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
   } else
   { v = strtod(s, &end);
     if ( *end )
-      return protocol_error(in),FALSE;
+      return newline_expected(in),FALSE;
   }
 
   *vp = v;
@@ -249,9 +263,9 @@ expect_crlf(IOSTREAM *in)
 
   if ( (c=Sgetcode(in)) == '\r' )
   { if ( Sgetcode(in) != '\n' )
-      return protocol_error(in);
+      return newline_expected(in);
   } else if ( c != '\n' )
-  { return protocol_error(in);
+  { return newline_expected(in);
   }
 
   return TRUE;
@@ -270,15 +284,13 @@ read_chunk(IOSTREAM *in, charbuf *cb, long long len)
   { int c;
 
     if ( (c=Sgetc(in)) == -1 )
-      return protocol_error(in);
+      return unexpected_eof(in);
 
     if ( !add_byte_charbuf(cb, c) )
       return FALSE;
   }
-  if ( i != len )
-    return protocol_error(in);
   if ( !expect_crlf(in) )
-    return protocol_error(in);
+    return FALSE;
 
   return TRUE;
 }
@@ -301,10 +313,10 @@ read_bulk(IOSTREAM *in, charbuf *cb)
     { long long chlen;
 
       if ( Sgetc(in) != ';' )
-	return protocol_error(in);
+	return protocol_error(in, "; expected");
       empty_charbuf(&nbuf);
       if ( !read_number(in, &nbuf, &chlen) )
-	return protocol_error(in);
+	return FALSE;
       if ( chlen == 0 )
       { return TRUE;
       } else
@@ -491,7 +503,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t push)
       { if ( c == 't' || c == 'f' )
 	  rc = PL_unify_bool(message, (c == 't'));
 	else
-	  rc = protocol_error(in);
+	  rc = protocol_error(in, "boolean_expected");
       }
       break;
     }
@@ -570,10 +582,13 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t push)
       if ( push == 0 && expect_crlf(in) )
 	rc = MSG_END;
       else
-	rc = protocol_error(in);
+	rc = protocol_error(in, "unexpected_code");
+      break;
+    case -1:
+      rc = unexpected_eof(in);
       break;
     default:
-      rc = protocol_error(in);
+      rc = protocol_error(in, "unexpected_code");
       break;
   }
 
