@@ -12,6 +12,22 @@ message channels, _streams_, etc.
 These features can be used to connect _micro services_, both for sharing
 state, notifications and distributing tasks.
 
+
+## Redis and threads {#redis-threads}
+
+The connection between the redis client and server uses a _stream pair_.
+Although SWI-Prolog stream I/O is thread-safe, having multiple threads
+using this same connection will mixup writes and their replies.
+
+At the moment, the following locking is in place.
+
+  - Connections created using redis_connect/3 are _not_ locked.  This
+    implies the connection handle may be used from a single thread only,
+    or redis/3 requests must be protected using with_mutex/2.
+  - Redis/3 request using a _server name_ established using redis_server/3
+    are locked using a mutex with the same name as the server name.
+
+
 ## About versions {#redis-versions}
 
 The current stable version of Redis is  6. Many Linux distros still ship

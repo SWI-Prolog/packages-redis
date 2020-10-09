@@ -322,11 +322,18 @@ redis(Redis, Req, Out) :-
     ).
 
 redis1(Redis, Req, Out) :-
+    atom(Redis),
+    !,
     redis_stream(Redis, S, true),
-    with_mutex(redis,
+    with_mutex(Redis,
                ( redis_write_msg(S, Req),
                  redis_read_stream(Redis, S, Out)
                )),
+    Out \== nil.
+redis1(Redis, Req, Out) :-
+    redis_stream(Redis, S, true),
+    redis_write_msg(S, Req),
+    redis_read_stream(Redis, S, Out),
     Out \== nil.
 
 recover(Error, Redis, Req, Out) :-
@@ -773,7 +780,7 @@ redis_read_stream(Redis, SI, Out) :-
         )
     ;   Formal = redis_error(_Code, _Message)
     ->  throw(E)
-    ;   print_message(error, E),
+    ;   print_message(warning, E),
         redis_disconnect(Redis, [force(true)]),
         throw(E)
     ).
