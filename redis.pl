@@ -65,6 +65,8 @@
             redis_unsubscribe/2,        % +Redis, +Channels
             redis_write/2,              % +Redis, +Command
             redis_read/2,               % +Redis, -Reply
+                                        % Building blocks
+            redis_array_dict/3,         % ?Array, ?Tag, ?Dict
                                         % Admin stuff
             redis_property/2,           % +Reply, ?Property
             redis_current_command/2,    % +Redis,?Command
@@ -451,31 +453,47 @@ redis_set_list(Redis, Key, List) :-
 
 redis_get_hash(Redis, Key, Dict) :-
     redis(Redis, hgetall(Key), TwoList),
-    list2_pairs(TwoList, Pairs),
-    dict_pairs(Dict, _, Pairs).
+    redis_array_dict(TwoList, _, Dict).
 
 redis_set_hash(Redis, Key, Dict) :-
-    dict_pairs(Dict, _Tag, Pairs),
-    pairs_2list(Pairs, TwoList),
-    Term =.. [hset,Key|TwoList],
+    redis_array_dict(Array, _, Dict),
+    Term =.. [hset,Key|Array],
     redis(Redis, del(Key), _),
     redis(Redis, Term, _Count).
 
-pairs_2list([], []) :-
-    !.
-pairs_2list([Name-Value|T0], [NameS,Value|T]) :-
-    atom_string(Name, NameS),
-    pairs_2list(T0, T).
+%!  redis_array_dict(?Array, ?Tag, ?Dict) is det.
+%
+%   Translate a Redis reply representing  hash   data  into a SWI-Prolog
+%   dict. Array is either a list  of   alternating  keys and values or a
+%   list of _pairs_. When translating to an array, this is always a list
+%   of alternating keys and values.
+%
+%   @arg Tag is the SWI-Prolog dict tag.
 
-list2_pairs([], []) :-
+redis_array_dict(Array, Tag, Dict) :-
+    nonvar(Array),
+    !,
+    array_to_pairs(Array, Pairs),
+    dict_pairs(Dict, Tag, Pairs).
+redis_array_dict(TwoList, Tag, Dict) :-
+    dict_pairs(Dict, Tag, Pairs),
+    pairs_to_array(Pairs, TwoList).
+
+array_to_pairs([], []) :-
     !.
-list2_pairs([NameS-Value|T0], [Name-Value|T]) :-
+array_to_pairs([NameS-Value|T0], [Name-Value|T]) :-
     !,                                  % RESP3 returns a map as pairs.
     atom_string(Name, NameS),
-    list2_pairs(T0, T).
-list2_pairs([NameS,Value|T0], [Name-Value|T]) :-
+    array_to_pairs(T0, T).
+array_to_pairs([NameS,Value|T0], [Name-Value|T]) :-
     atom_string(Name, NameS),
-    list2_pairs(T0, T).
+    array_to_pairs(T0, T).
+
+pairs_to_array([], []) :-
+    !.
+pairs_to_array([Name-Value|T0], [NameS,Value|T]) :-
+    atom_string(Name, NameS),
+    pairs_to_array(T0, T).
 
 %!  redis_scan(+Redis, -LazyList, +Options) is det.
 %!  redis_sscan(+Redis, -LazyList, +Options) is det.
