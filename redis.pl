@@ -108,21 +108,22 @@ User = "Bob"
 
 :- dynamic server/3.
 
-:- dynamic ( connection/2,              % Alias, Stream
+:- dynamic ( connection/2,              % ServerName, Stream
              subscription/2,            % Stream, Channel
              listening/2                % Stream, Thread
            ) as volatile.
 
-%!  redis_server(+Alias, +Address, +Options) is det.
+%!  redis_server(+ServerName, +Address, +Options) is det.
 %
-%   Register a redis server without connecting to  it. The Alias acts as
-%   a lazy connection alias. Initially  the   alias  `default` points at
-%   `localhost:6379` with no connect options.   The  `default` server is
-%   used  for  redis/1  and  redis/2  and  may  be  changed  using  this
+%   Register a redis server without  connecting   to  it. The ServerName
+%   acts as a lazy connection alias.  Initially the ServerName `default`
+%   points at `localhost:6379` with no   connect  options. The `default`
+%   server is used for redis/1 and redis/2 and may be changed using this
 %   predicate.
 %
 %   Connections established this way are   automatically  reconnected if
-%   the connection is lost for some reason.
+%   the connection is lost for  some   reason  unless a reconnect(false)
+%   option is specified.
 
 redis_server(Alias, Address, Options) :-
     must_be(ground, Alias),
@@ -139,10 +140,6 @@ server(default, localhost:6379, []).
 %   -Connection,   +Options).   redis_connect/1   is     equivalent   to
 %   redis_connect(localhost:6379, Connection, []).  Options:
 %
-%     - alias(+Alias)
-%       Make the connection globally available as Alias.
-%     - open(+OpenMode)
-%       One of `once` (default if an alias is provided) or `multiple`.
 %     - reconnect(+Boolean)
 %       If `true`, try to reconnect to the service when the connection
 %       seems lost.  Default is `true` for connections specified using
@@ -162,8 +159,9 @@ server(default, localhost:6379, []).
 %   to redis_connect(Host:Port, Connection, []).
 %
 %   @arg Address is a term Host:Port or  the name of a server registered
-%   using redis_server/3. The latter realises a   new connection that is
-%   typically used with redis_subscribe/2 or redis/1.
+%   using redis_server/3. The latter realises a _new_ connection that is
+%   typically used for blocking redis  commands   such  as listening for
+%   published messages, waiting on a list or stream.
 
 redis_connect(Conn) :-
     redis_connect(default, Conn, []).
@@ -179,16 +177,6 @@ redis_connect(Server, Conn, Options) :-
     !,
     merge_options(Options, DefaultOptions, Options2),
     do_connect(Server, Address, Conn, [address(Address)|Options2]).
-redis_connect(Address, Conn, Options) :-
-    option(alias(Alias), Options),
-    !,
-    (   option(open(once), Options, once),
-        connection(Alias, S)
-    ->  Conn = redis(Alias, S, Options)
-    ;   do_connect(Alias, Address, Conn, [address(Address)|Options]),
-        Conn = redis(_, S, _),
-        asserta(connection(Alias, S))
-    ).
 redis_connect(Address, Conn, Options) :-
     do_connect(Address, Address, Conn, [address(Address)|Options]).
 
@@ -233,16 +221,16 @@ redis_stream(Var, _, _) :-
     var(Var),
     !,
     instantiation_error(Var).
-redis_stream(Alias, S, Connect) :-
-    atom(Alias),
+redis_stream(ServerName, S, Connect) :-
+    atom(ServerName),
     !,
-    (   connection(Alias, S0)
+    (   connection(ServerName, S0)
     ->  S = S0
     ;   Connect == true,
-        server(Alias, Address, Options)
-    ->  redis_connect(Address, Connection, [alias(Alias)|Options]),
+        server(ServerName, Address, Options)
+    ->  redis_connect(Address, Connection, Options),
         redis_stream(Connection, S, false)
-    ;   existence_error(redis, Alias)
+    ;   existence_error(redis_server, ServerName)
     ).
 redis_stream(redis(_,S0,_), S, _) :-
     S0 \== (-),
