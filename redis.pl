@@ -229,7 +229,8 @@ redis_stream(ServerName, S, Connect) :-
     ;   Connect == true,
         server(ServerName, Address, Options)
     ->  redis_connect(Address, Connection, Options),
-        redis_stream(Connection, S, false)
+        redis_stream(Connection, S, false),
+        asserta(connection(ServerName, S))
     ;   existence_error(redis_server, ServerName)
     ).
 redis_stream(redis(_,S0,_), S, _) :-
