@@ -167,12 +167,12 @@ test(get_and_set, S == "Hello World") :-
 test(set_and_get_with_expiry, condition(resp(2))) :-
     run([ set(test_string, 'Miller time!', ex, 1),
           call(sleep(1.5)),
-          \+ get(test_string) - _
+          \+ get(test_string)
         ], [test_string]).
 test(set_and_get_with_expiry, condition(resp(3))) :-
     run([ set(test_string, 'Miller time!', px, 100),
           call(sleep(0.2)),
-          \+ get(test_string) - _
+          \+ get(test_string)
         ], [test_string]).
 test(append_to_an_existing_string) :-
     run([ set(test_string, 'GNU Prolog'),
@@ -388,7 +388,7 @@ raction(_, assertion(Goal)) :-
     !,
     assertion(Goal).
 raction(C, Action) :-
-    redis(C, Action, _).
+    redis(C, Action).
 
 rcleanup(C, Clean) :-
     maplist(rdel(C), Clean),

@@ -84,8 +84,15 @@
 :- autoload(library(lists), [append/3, member/2]).
 :- autoload(library(option), [merge_options/3, option/2, option/3]).
 :- use_module(library(debug), [debug/3]).
+:- use_module(library(settings), [setting/4, setting/2]).
 
 :- use_foreign_library(foreign(redis4pl)).
+
+:- setting(max_retry_count, nonneg, 8640, % one day
+           "Max number of retries").
+:- setting(max_retry_wait, number, 10,
+           "Max time to wait between recovery attempts").
+
 
 /** <module> Redis client
 
@@ -314,30 +321,33 @@ redis_disconnect(Redis, _Options) :-
 %   @error redis_error(String)
 
 redis(Redis, Req) :-
-    redis(Redis, Req, _).
+    redis1(Redis, Req, Out),
+    Out \== nil.
 
 redis(Redis, Req, Out) :-
+    redis1(Redis, Req, Out),
+    Out \== nil.
+
+redis1(Redis, Req, Out) :-
     Error = error(Formal, _),
-    catch(redis1(Redis, Req, Out), Error, true),
+    catch(redis2(Redis, Req, Out), Error, true),
     (   var(Formal)
     ->  true
     ;   recover(Error, Redis, Req, Out)
     ).
 
-redis1(Redis, Req, Out) :-
+redis2(Redis, Req, Out) :-
     atom(Redis),
     !,
     redis_stream(Redis, S, true),
     with_mutex(Redis,
                ( redis_write_msg(S, Req),
                  redis_read_stream(Redis, S, Out)
-               )),
-    Out \== nil.
-redis1(Redis, Req, Out) :-
+               )).
+redis2(Redis, Req, Out) :-
     redis_stream(Redis, S, true),
     redis_write_msg(S, Req),
-    redis_read_stream(Redis, S, Out),
-    Out \== nil.
+    redis_read_stream(Redis, S, Out).
 
 recover(Error, Redis, Req, Out) :-
     reconnect_error(Error),
@@ -346,9 +356,11 @@ recover(Error, Redis, Req, Out) :-
     debug(redis(recover), '~p: got error ~p; trying to reconnect',
           [Redis, Error]),
     redis_disconnect(Redis, [force(true)]),
-    wait(Redis),
-    redis(Redis, Req, Out),
-    retractall(failure(Redis, _)).
+    (   wait(Redis)
+    ->  redis1(Redis, Req, Out),
+        retractall(failure(Redis, _))
+    ;   throw(Error)
+    ).
 recover(Error, _, _, _) :-
     throw(Error).
 
@@ -363,14 +375,24 @@ auto_reconnect(Server) :-
 reconnect_error(error(socket_error(_Code, _),_)).
 reconnect_error(error(syntax_error(unexpected_eof),_)).
 
+%!  wait(+Redis)
+%
+%   Wait for some time after a failure. First  we wait for 10ms. This is
+%   doubled on each failure upto the   setting  `max_retry_wait`. If the
+%   setting `max_retry_count` is exceeded we fail and the called signals
+%   an exception.
+
 :- dynamic failure/2 as volatile.
 
 wait(Redis) :-
     retract(failure(Redis, Times)),
+    setting(max_retry_count, Count),
+    Times < Count,
     !,
     Times2 is Times+1,
     asserta(failure(Redis, Times2)),
-    Wait is min(6000, 1<<Times)*0.01,
+    setting(max_retry_wait, MaxWait),
+    Wait is min(MaxWait*100, 1<<Times)/100,
     debug(redis(recover), '  Sleeping ~p seconds', [Wait]),
     sleep(Wait).
 wait(Redis) :-

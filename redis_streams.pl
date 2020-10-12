@@ -267,7 +267,8 @@ start_templ(Streams, Starts0, Starts, StreamArgs, Options) :-
 
 listen_loop(Redis, Starts, CommandTempl, OnBroadcast, OnIdle, Streams, Options) :-
     copy_term(CommandTempl, Starts-Command),
-    (   redis(Redis, Command, Reply)
+    (   redis(Redis, Command, Reply),
+        Reply \== nil
     ->  dispatch_streams(Reply, Redis, Starts, NewStarts,
                          OnBroadcast, OnIdle, Options)
     ;   NewStarts = Starts
