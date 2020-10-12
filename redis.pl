@@ -158,10 +158,10 @@ server(default, localhost:6379, []).
 %   compatibility to the original GNU-Prolog interface and is equivalent
 %   to redis_connect(Host:Port, Connection, []).
 %
-%   @arg Address is a term Host:Port or  the name of a server registered
-%   using redis_server/3. The latter realises a _new_ connection that is
-%   typically used for blocking redis  commands   such  as listening for
-%   published messages, waiting on a list or stream.
+%   @arg Address is a term Host:Port, unix(File) or the name of a server
+%   registered  using  redis_server/3.  The  latter   realises  a  _new_
+%   connection that is typically used for   blocking redis commands such
+%   as listening for published messages, waiting on a list or stream.
 
 redis_connect(Conn) :-
     redis_connect(default, Conn, []).
@@ -172,11 +172,13 @@ redis_connect(Conn, Host, Port) :-
     !,                                  % GNU-Prolog compatibility
     redis_connect(Host:Port, Conn, []).
 redis_connect(Server, Conn, Options) :-
-    ground(Server),
-    server(Server, Address, DefaultOptions),
+    atom(Server),
     !,
-    merge_options(Options, DefaultOptions, Options2),
-    do_connect(Server, Address, Conn, [address(Address)|Options2]).
+    (   server(Server, Address, DefaultOptions)
+    ->  merge_options(Options, DefaultOptions, Options2),
+        do_connect(Server, Address, Conn, [address(Address)|Options2])
+    ;   existence_error(redis_server, Server)
+    ).
 redis_connect(Address, Conn, Options) :-
     do_connect(Address, Address, Conn, [address(Address)|Options]).
 
@@ -186,10 +188,16 @@ redis_connect(Address, Conn, Options) :-
 %
 %       redis(Id, Stream, Options)
 
-do_connect(Id, Address, Conn, Options) :-
+do_connect(Id, Address0, Conn, Options) :-
+    tcp_address(Address, Address0),
     tcp_connect(Address, Stream, Options),
     Conn = redis(Id, Stream, Options),
     hello(Conn, Options).
+
+tcp_address(unix(Path), Path) :-
+    !.                                  % Using an atom is ambiguous
+tcp_address(Address, Address).
+
 
 %!  hello(+Connection, +Option)
 %
