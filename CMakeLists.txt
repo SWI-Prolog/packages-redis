@@ -17,3 +17,9 @@ pkg_doc(redis
 	    redis.pl libredis.tex)
 
 test_libs(redis)
+
+set(DEMO_FILES
+    common.pl  prime-node.pl  primes.pl  README.md)
+prepend(DEMO_FILES demo ${DEMO_FILES})
+
+swipl_examples(${DEMO_FILES})
