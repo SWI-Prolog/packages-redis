@@ -49,7 +49,6 @@
             redis/1,                    % +Request
             redis/2,                    % +Connection, +Request
             redis/3,                    % +Connection, +Request, -Reply
-            redis_cli/1,                % +Request
                                         % High level queries
             redis_get_list/3,           % +Redis, +Key, -List
             redis_get_list/4,           % +Redis, +Key, +ChunkSize, -List
@@ -189,7 +188,7 @@ redis_connect(Address, Conn, Options) :-
 %       redis(Id, Stream, Options)
 
 do_connect(Id, Address0, Conn, Options) :-
-    tcp_address(Address, Address0),
+    tcp_address(Address0, Address),
     tcp_connect(Address, Stream, Options),
     Conn = redis(Id, Stream, Options),
     hello(Conn, Options).
@@ -297,9 +296,7 @@ redis_disconnect(Redis, _Options) :-
     close(S),
     retractall(connection(_,S)).
 
-
-%!  redis(+Request) is semidet.
-%!  redis(+Request, -Reply) is semidet.
+%!  redis(+Connection, +Request) is semidet.
 %!  redis(+Connection, +Request, -Reply) is semidet.
 %
 %   Execute a redis command on Connnection.   The first executes Request
@@ -316,11 +313,8 @@ redis_disconnect(Redis, _Options) :-
 %
 %   @error redis_error(String)
 
-redis(Req) :-
-    redis(default, Req, _Out).
-
-redis(Req, Out) :-
-    redis(default, Req, Out).
+redis(Redis, Req) :-
+    redis(Redis, Req, _).
 
 redis(Redis, Req, Out) :-
     Error = error(Formal, _),
@@ -383,12 +377,13 @@ wait(Redis) :-
     asserta(failure(Redis, 1)).
 
 
-%!  redis_cli(+Request)
+%!  redis(+Request)
 %
 %   Connect to the default redis server,   call  redist/3 using Request,
-%   disconnect and print the result.
+%   disconnect and print the result.  This   predicate  is  intended for
+%   interactive usage.
 
-redis_cli(Req) :-
+redis(Req) :-
     setup_call_cleanup(
         redis_connect(default, C, []),
         redis1(C, Req, Out),
