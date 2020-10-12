@@ -315,8 +315,8 @@ join_starts(_Start0, Start, Start).
 
 %!  xlisten_group(+Redis, +Group, +Consumer, +Streams, +Options)
 %
-%   Listen as Consumer to Group. This is very similar to xlisten/3, with
-%   the following differences:
+%   Listen as Consumer to Group. This is  similar to xlisten/3, with the
+%   following differences:
 %
 %     - Instead of using broadcast/1, broadcast_request/1 is used and
 %       the message is only considered processed if broadcast_request/1
@@ -367,7 +367,7 @@ xbroadcast_group(Connection, Stream, Id, Dict, Options) :-
                                                 group:Group,
                                                 consumer:Consumer})),
               Error, xbroadcast_error(Error, Connection, Stream, Group, Id))
-    ->  redis(Connection, xack(Stream, Group, Id), _)
+    ->  redis(Connection, xack(Stream, Group, Id))
     ;   true
     ).
 
@@ -472,7 +472,8 @@ check_limit_deliveries(Redis, Stream, Delivered, Id, Options) :-
     option(group(Group-_Me), Options),
     (   xhook(Stream, delivery_failed(Id,Group,Delivered))
     ->  true
-    ;   redis(Redis, xdel(Stream, Id), _)
+    ;   print_message(warning, redis(delivery_failed(Id,Group,Delivered))),
+        redis(Redis, xack(Stream, Group, Id))
     ),
     fail.
 
@@ -492,7 +493,9 @@ xleave_group(Redis, Group, Consumer, [Stream|_]) :-
 
 %!  xconsumer_stop(+Leave)
 %
-%   May be called from a consumer listener to stop the consumer.
+%   May be called from a consumer listener   to  stop the consumer. This
+%   predicate throws the exception redis(stop(Leave)),   which is caught
+%   by xlisten_group/5.
 
 xconsumer_stop(Leave) :-
     throw(redis(stop(Leave))).
@@ -511,4 +514,27 @@ xconsumer_stop(Leave) :-
 %       A message was delivered more than specified by max_deliveries/1
 %       of xlisten_group/5.  Id is the message id, Group the group and
 %       Delivered the current delivery count.  If the hooks fails, the
-%       message is deleted using ``XDEL``.
+%       message is acknowledged using ``XACK``.  From [introduction
+%       to streams](https://redis.io/topics/streams-intro):
+%
+%       > "So once the deliveries counter reaches a given large number
+%       > that you chose, it is probably wiser to put such messages in
+%       > another stream and send a notification to the system
+%       > administrator. This is basically the way that Redis streams
+%       > implement the concept of the dead letter."
+
+
+		 /*******************************
+		 *            MESSAGES		*
+		 *******************************/
+
+:- multifile prolog:message//1.
+
+prolog:message(redis(Message)) -->
+    [ 'REDIS: '-[] ],
+    redis_message(Message).
+
+redis_message(delivery_failed(Id,Group,Delivered)) -->
+    [ 'Failed to deliver ~p to group ~p (tried ~D times)'-
+      [Id, Group, Delivered]
+    ].
