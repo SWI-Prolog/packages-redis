@@ -77,6 +77,7 @@
 :- autoload(library(error),
             [ must_be/2,
               instantiation_error/1,
+              uninstantiation_error/1,
               existence_error/2,
               permission_error/3
             ]).
@@ -106,8 +107,8 @@ commands on the server.  For example:
 
 ```
 ?- redis_server(default, 'redis':6379, [password("secret")]).
-?- redis(set(user, "Bob")).
-?- redis(get(user), User).
+?- redis(default, set(user, "Bob")).
+?- redis(default, get(user), User).
 User = "Bob"
 ```
 */
@@ -192,12 +193,12 @@ redis_connect(Address, Conn, Options) :-
 %
 %   Open the connection.  A connection is a compound term of the shape
 %
-%       redis(Id, Stream, Options)
+%       redis_connection(Id, Stream, Failures, Options)
 
 do_connect(Id, Address0, Conn, Options) :-
     tcp_address(Address0, Address),
     tcp_connect(Address, Stream, Options),
-    Conn = redis(Id, Stream, Options),
+    Conn = redis_connection(Id, Stream, 0, Options),
     hello(Conn, Options).
 
 tcp_address(unix(Path), Path) :-
@@ -216,25 +217,28 @@ hello(Con, Options) :-
     !,
     (   option(user(User), Options),
         option(password(Password), Options)
-    ->  redis(Con, hello(3, auth, User, Password), _)
-    ;   redis(Con, hello(3), _)
+    ->  redis(Con, hello(3, auth, User, Password))
+    ;   redis(Con, hello(3))
     ).
 hello(Con, Options) :-
     option(password(Password), Options),
     !,
-    redis(Con, auth(Password), _).
+    redis(Con, auth(Password)).
 hello(_, _).
 
 %!  redis_stream(+Spec, --Stream, +DoConnect) is det.
 %
 %   Get the stream to a Redis server from  Spec. Spec is either the name
-%   of a registered server ot a   term  redis(Id,Stream,Options). If the
-%   stream is disconnected it will be reconnected.
+%   of       a       registered       server       or       a       term
+%   redis_connection(Id,Stream,Failures,Options).  If  the    stream  is
+%   disconnected it will be reconnected.
 
-redis_stream(Var, _, _) :-
-    var(Var),
-    !,
-    instantiation_error(Var).
+redis_stream(Var, S, _) :-
+    (   var(Var)
+    ->  !, instantiation_error(Var)
+    ;   nonvar(S)
+    ->  !, uninstantiation_error(S)
+    ).
 redis_stream(ServerName, S, Connect) :-
     atom(ServerName),
     !,
@@ -247,15 +251,17 @@ redis_stream(ServerName, S, Connect) :-
         asserta(connection(ServerName, S))
     ;   existence_error(redis_server, ServerName)
     ).
-redis_stream(redis(_,S0,_), S, _) :-
+redis_stream(redis_connection(_,S0,_,_), S, _) :-
     S0 \== (-),
     !,
     S = S0.
 redis_stream(Redis, S, _) :-
-    Redis = redis(Id,-,Options),
+    Redis = redis_connection(Id,-,_,Options),
     option(address(Address), Options),
-    do_connect(Id,Address,redis(_,S,_),Options),
-    nb_setarg(2, Redis, S).
+    do_connect(Id,Address,Redis2,Options),
+    arg(2, Redis2, S0),
+    nb_setarg(2, Redis, S0),
+    S = S0.
 
 has_redis_stream(Var, _) :-
     var(Var),
@@ -265,7 +271,8 @@ has_redis_stream(Alias, S) :-
     atom(Alias),
     !,
     connection(Alias, S).
-has_redis_stream(redis(_,S,_), S).
+has_redis_stream(redis_connection(_,S,_,_), S) :-
+    S \== (-).
 
 
 %!  redis_disconnect(+Connection) is det.
@@ -287,7 +294,7 @@ redis_disconnect(Redis) :-
 redis_disconnect(Redis, Options) :-
     option(force(true), Options),
     !,
-    (   Redis = redis(_Id, S, _Opts)
+    (   Redis = redis_connection(_Id, S, _, _Opts)
     ->  (   S == (-)
         ->  true
         ;   close(S, [force(true)]),
@@ -364,7 +371,7 @@ recover(Error, Redis, Req, Out) :-
 recover(Error, _, _, _) :-
     throw(Error).
 
-auto_reconnect(redis(_,_,Options)) :-
+auto_reconnect(redis_connection(_,_,_,Options)) :-
     !,
     option(reconnect(true), Options).
 auto_reconnect(Server) :-
@@ -385,18 +392,34 @@ reconnect_error(error(syntax_error(unexpected_eof),_)).
 :- dynamic failure/2 as volatile.
 
 wait(Redis) :-
-    retract(failure(Redis, Times)),
+    redis_failures(Redis, Failures),
     setting(max_retry_count, Count),
-    Times < Count,
-    !,
-    Times2 is Times+1,
-    asserta(failure(Redis, Times2)),
+    Failures < Count,
+    Failures2 is Failures+1,
+    redis_set_failures(Redis, Failures2),
     setting(max_retry_wait, MaxWait),
-    Wait is min(MaxWait*100, 1<<Times)/100,
+    Wait is min(MaxWait*100, 1<<Failures)/100.0,
     debug(redis(recover), '  Sleeping ~p seconds', [Wait]),
     sleep(Wait).
-wait(Redis) :-
-    asserta(failure(Redis, 1)).
+
+redis_failures(redis_connection(_,_,Failures0,_), Failures) :-
+    !,
+    Failures = Failures0.
+redis_failures(Server, Failures) :-
+    atom(Server),
+    (   failure(Server, Failures)
+    ->  true
+    ;   Failures = 0
+    ).
+
+redis_set_failures(Connection, Count) :-
+    compound(Connection),
+    !,
+    nb_setarg(3, Connection, Count).
+redis_set_failures(Server, Count) :-
+    atom(Server),
+    retractall(failure(Server, _)),
+    asserta(failure(Server, Count)).
 
 
 %!  redis(+Request)
