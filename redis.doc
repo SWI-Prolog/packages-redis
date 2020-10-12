@@ -37,6 +37,7 @@ message broker''}
 
 \input{overview.tex}
 \input{libredis.tex}
+\input{redisstreams.tex}
 
 \printindex
 

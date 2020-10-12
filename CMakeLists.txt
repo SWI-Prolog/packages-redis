@@ -4,7 +4,7 @@ project(swipl-redis)
 include("../cmake/PrologPackage.cmake")
 
 swipl_plugin(redis
-	     PL_LIBS redis.pl)
+	     PL_LIBS redis.pl redis_streams.pl)
 
 swipl_plugin(redis4pl
 	     C_SOURCES redis4pl.c)
@@ -12,7 +12,7 @@ swipl_plugin(redis4pl
 pkg_doc(redis
 	SECTION
 	SOURCES
-	    overview.md
+	    overview.md redis_streams.pl
 	SOURCE
 	    redis.pl libredis.tex)
 

@@ -37,7 +37,7 @@
             test_redis/1                % +Options
           ]).
 :- use_module(library(plunit)).
-:- use_module(library(redis)).
+:- use_module(library(redis_streams)).
 :- use_module(library(apply)).
 :- use_module(library(debug)).
 
@@ -80,7 +80,8 @@ test_redis(Options) :-
                 redis_strings,
                 redis_lists,
                 redis_hashes,
-                redis_prolog
+                redis_prolog,
+                redis_groups
               ]).
 
 redis_server_address(Host:Port) :-
@@ -396,6 +397,107 @@ rcleanup(C, Clean) :-
 rdel(C, Key) :-
     redis(C, del(Key), _).
 
+
+		 /*******************************
+		 *             STREAMS		*
+		 *******************************/
+
+:- begin_tests(redis_groups).
+
+test(primes, [setup(clean_group), %cleanup(clean_group),
+              Len == 1000]) :-
+    xprimes(1, 1000),
+    xwait,
+    redis(test_redis, llen(test_primes), Len).
+
+:- end_tests(redis_groups).
+
+clean_group :-
+    redis(test_redis, del(test_candidates, test_primes), _).
+
+make_group :-
+    catch(redis(test_redis,
+                xgroup(create, test_candidates, test_primes, $, mkstream)),
+          error(redis_error(busygroup,_),_),
+          true).
+
+xprimes(Low, High) :-
+    make_group,
+    listen_primes(bob),
+    listen_primes(alice),
+    forall(between(Low, High, I),
+           add_candidate(I, test_primes)),
+    xadd(test_redis, test_candidates, _, _{leave:bob}),
+    xadd(test_redis, test_candidates, _, _{leave:alice}).
+
+add_candidate(I, Into) :-
+    get_time(Now),
+    xadd(test_redis, test_candidates, _, _{candidate:I, time:Now, drain:Into}).
+
+listen_primes(Consumer) :-
+    thread_create(xlisten_group(test_redis,
+                                test_primes, Consumer, [test_candidates],
+                                [ block(0.1)
+                                ]),
+                  _, [alias(Consumer), detached(true)]).
+
+:- listen(redis_consume(test_candidates, Data, Context),
+          check_prime_string(Data, Context)).
+
+check_prime_string(Data, Context) :-
+    number_string(N, Data.get(candidate)),
+    number_string(T0, Data.get(time)),
+    !,
+    call_time(is_prime(N), Dict, True),
+    get_time(T1),
+    T is T1-T0,
+    redis(test_redis,
+          rpush(Data.drain, prolog(p(N,True,Context.consumer,Dict.cpu,T))),
+          _).
+check_prime_string(Data, Context) :-
+    !,
+    Consumer = Data.get(leave),
+    (   atom_string(Context.consumer, Consumer)
+    ->  debug(test, '~p: asked to leave ~p (accept)~n',
+              [Context.consumer, Consumer]),
+        xconsumer_stop(false)
+    ;   debug(test, '~p: asked to leave ~p (reject)~n',
+              [Context.consumer, Consumer]),
+        fail
+    ).
+
+is_prime(1) :- !.
+is_prime(2) :- !.
+is_prime(N) :-
+    End is floor(sqrt(N)),
+    (   between(2, End, I),
+        N mod I =:= 0
+    ->  !, fail
+    ;   true
+    ).
+
+xwait :-
+    xwait(test_redis, 10, test_candidates, test_primes).
+
+xwait(Redis, MaxTime, Stream, Group) :-
+    get_time(T0),
+    End is T0+MaxTime,
+    repeat,
+    redis(Redis, xpending(Stream, Group), [Pending|_]),
+    (   Pending =:= 0
+    ->  !
+    ;   get_time(T1),
+        T1 > End
+    ->  !, fail
+    ;   %format(user_error, "\rPending: ~D", [Pending]),
+        sleep(0.1),
+        fail
+    ).
+
+
+		 /*******************************
+		 *            MESSAGES		*
+		 *******************************/
 
 :- multifile
     prolog:message//1.
