@@ -161,6 +161,11 @@ server(default, localhost:6379, []).
 %       version 2.  Redis 6 also supports version 3.  When specified
 %       as `3`, the `HELLO` command is used to upgrade the protocol.
 %
+%   Instead of using these predicates, redis/2  and redis/3 are normally
+%   used with a _server name_  argument registered using redis_server/3.
+%   These  predicates  are  meant  for   creating  a  temporary  paralel
+%   connection or using a connection with a _blocking_ call.
+%
 %   @compat   redis_connect(-Connection,   +Host,     +Port)    provides
 %   compatibility to the original GNU-Prolog interface and is equivalent
 %   to redis_connect(Host:Port, Connection, []).
