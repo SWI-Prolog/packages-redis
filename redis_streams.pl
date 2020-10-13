@@ -282,7 +282,7 @@ listen_loop(Redis, Starts, CommandTempl, OnBroadcast, OnIdle, Streams, Options) 
     listen_loop(Redis, NewStarts, CommandTempl,
                 OnBroadcast, OnIdle, Streams, Options).
 
-dispatch_streams([], _, [], [], _, _, _).
+dispatch_streams([], _, Starts, Starts, _, _, _).
 dispatch_streams([Tuple|T], Redis, [_Start|TS], [>|NTS],
                  OnBroadcast, OnIdle, Options) :-
     stream_tuple(Tuple, _, []),
