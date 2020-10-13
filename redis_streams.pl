@@ -307,7 +307,10 @@ dispatch_messages([[Start,Data]|T], Stream, Redis, Start0, NewStart,
     dispatch_messages(T, Stream, Redis, Start1, NewStart, OnBroadcast, Options).
 
 dispatch_message(Data, Stream, Redis, Id, OnBroadcast, Options) :-
-    redis_array_dict(Data, redis, Dict),
+    (   Data == nil                     % when does this happen?
+    ->  Dict = redis{}
+    ;   redis_array_dict(Data, redis, Dict)
+    ),
     call(OnBroadcast, Redis, Stream, Id, Dict, Options).
 
 join_starts(>, _Start, >) :-
