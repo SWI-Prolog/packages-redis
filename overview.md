@@ -49,6 +49,41 @@ New projects are encouraged to use Redis version 6 with the version 3
 protocol.  See redis_server/3.
 
 
+## Redis as a message brokering system {#redis-brokering}
+
+Starting with Redis 5, redis supports _streams_. A stream is a list of
+messages. Streams can be used as a reliable alternative to the older
+Redis PUB/SUB (Publish Subscribe) mechanism that has no memory, i.e., if
+a node is down when a message arrives the message is missed. In
+addition, they can be used to have each message processed by a
+_consumer_ that belongs to a _consumer group_. Both facilities are
+supported by [library(redis_streams)](#redisstreams)
+
+Redis streams provide all the low-level primitives to realise message
+brokering.  Putting it all together is non-trivial though.  Notably:
+
+  - We must take care of messages that have been sent to some
+    consumer but the consumer fails to process the message and (thus)
+    ACK it is processed.  This is handled by xlisten_group/5 using
+    several options.  Good defaults for these options are hard to
+    give as it depends on the required processing time for a message,
+    how common failures are and an acceptable delay time in case
+    of a failure, what to do in case of a persistent failure, etc.
+
+  - Streams are independent from consumer groups and acknowledged
+    messages remain in the stream.  xstream_set/3 can be used to
+    limit the length of the stream, discarding the oldest messages.
+    However, it is hard to give a sensible default.  The required
+    queue length depends on the the size of the messages, whether
+    messages come in more or less randomly or in bursts (that cause
+    the stream to grow for a while), available memory, how bad it is
+    if some messages get lost, etc.
+
+The directory `doc/packages/examples/redis` in the installation provides
+an example using streams and consumer groups to realise one or more
+clients connected to one or more compute nodes.
+
+
 ## History  {#redis-history}
 
 This module is based on the `gpredis.pl` by Sean Charles for GNU-Prolog.

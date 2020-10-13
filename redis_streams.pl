@@ -86,7 +86,12 @@ This library abstracts the latter two scenarios. The main predicates are
 
 %!  xstream_set(+Redis, +Key, +Option)
 %
-%   Set an option on for Key on Redis.
+%   Set an option on for Key on Redis.  Currently supports:
+%
+%     - maxlen(+Count)
+%       Make xadd/4 add a ``MAXLEN ~`` Count option to the ``XADD``
+%       command, capping the length of the stream.  See also
+%       [Redis as a message brokering system](#redis-brokering)
 
 xstream_set(Redis, KeyS, Option) :-
     must_be(atom, Redis),
