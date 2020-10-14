@@ -286,7 +286,7 @@ listen_loop(Redis, Starts, CommandTempl, OnBroadcast, OnIdle, Streams, Options) 
     copy_term(CommandTempl, Starts-Command),
     (   redis(Redis, Command, Reply),
         Reply \== nil
-    ->  dispatch_streams(Reply, Redis, Starts, NewStarts,
+    ->  dispatch_streams(Reply, Redis, Streams, Starts, NewStarts,
                          OnBroadcast, OnIdle, Options)
     ;   NewStarts = Starts
     ),
@@ -294,22 +294,41 @@ listen_loop(Redis, Starts, CommandTempl, OnBroadcast, OnIdle, Streams, Options) 
     listen_loop(Redis, NewStarts, CommandTempl,
                 OnBroadcast, OnIdle, Streams, Options).
 
-dispatch_streams([], _, Starts, Starts, _, _, _).
-dispatch_streams([Tuple|T], Redis, [_Start|TS], [>|NTS],
+dispatch_streams([], _, _, Starts, NewStarts, _, _, _) :-
+    maplist(copy_start, Starts, NewStarts).
+dispatch_streams([Tuple|T], Redis, Streams, Starts, NewStarts,
                  OnBroadcast, OnIdle, Options) :-
-    stream_tuple(Tuple, _, []),
+    stream_tuple(Tuple, StreamS, []),
+    atom_string(Stream, StreamS),
     !,                                  % xreadgroup: no more old pending stuff
-    dispatch_streams(T, Redis, TS, NTS, OnBroadcast, OnIdle, Options).
-dispatch_streams([Tuple|T], Redis, [Start|TS], [NewStart|NTS],
+    set_start(Stream, _Start, >, Streams, Starts, NewStarts),
+    dispatch_streams(T, Redis, Streams, Starts, NewStarts,
+                     OnBroadcast, OnIdle, Options).
+dispatch_streams([Tuple|T], Redis, Streams, Starts, NewStarts,
                  OnBroadcast, OnIdle, Options) :-
     stream_tuple(Tuple, StreamS, Messages),
     atom_string(Stream, StreamS),
+    set_start(Stream, Start, NewStart, Streams, Starts, NewStarts),
     dispatch_messages(Messages, Stream, Redis, Start, NewStart,
                       OnBroadcast, Options),
-    dispatch_streams(T, Redis, TS, NTS, OnBroadcast, OnIdle, Options).
+    dispatch_streams(T, Redis, Streams, Starts, NewStarts,
+                     OnBroadcast, OnIdle, Options).
 
 stream_tuple(Stream-Messages, Stream, Messages) :- !.
 stream_tuple([Stream,Messages], Stream, Messages).
+
+set_start(Stream, Old, New, [Stream|_], [Old|_], [New|_]) :-
+    !.
+set_start(Stream, Old, New, [_|Streams], [_|OldStarts], [_|NewStarts]) :-
+    set_start(Stream, Old, New, Streams, OldStarts, NewStarts).
+
+copy_start(Old, New) :-
+    (   var(New)
+    ->  Old = New
+    ;   true
+    ).
+
+%!  dispatch_messages(+Messages, +Stream, +Redis, +Start0, -Start) is det
 
 dispatch_messages([], _, _, Start, Start, _, _).
 dispatch_messages([[Start,Data]|T], Stream, Redis, Start0, NewStart,
