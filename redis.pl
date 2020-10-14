@@ -60,8 +60,10 @@
             redis_hscan/4,              % +Redis, +Hash, -LazyList, +Options
             redis_zscan/4,              % +Redis, +Set, -LazyList, +Options
                                         % Publish/Subscribe
-            redis_subscribe/2,          % +Redis, +Channels
-            redis_unsubscribe/2,        % +Redis, +Channels
+            redis_subscribe/4,          % +Redis, +Channels, -Id, +Options
+            redis_subscribe/2,          % +Id, +Channels
+            redis_unsubscribe/2,        % +Id, +Channels
+            redis_current_subscription/2, % ?Id,?Channels
             redis_write/2,              % +Redis, +Command
             redis_read/2,               % +Redis, -Reply
                                         % Building blocks
@@ -72,18 +74,18 @@
             redis_current_command/3     % +Redis, +Command, -Properties
           ]).
 :- autoload(library(socket), [tcp_connect/3]).
-:- autoload(library(apply), [maplist/2, convlist/3]).
+:- autoload(library(apply), [maplist/2, convlist/3, maplist/4, maplist/3]).
 :- autoload(library(broadcast), [broadcast/1]).
 :- autoload(library(error),
             [ must_be/2,
               instantiation_error/1,
               uninstantiation_error/1,
-              existence_error/2,
-              permission_error/3
+              existence_error/2
             ]).
 :- autoload(library(lazy_lists), [lazy_list/2]).
 :- autoload(library(lists), [append/3, member/2]).
 :- autoload(library(option), [merge_options/3, option/2, option/3]).
+:- autoload(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(debug), [debug/3]).
 :- use_module(library(settings), [setting/4, setting/2]).
 
@@ -137,9 +139,7 @@ User = "Bob"
 
 :- dynamic server/3.
 
-:- dynamic ( connection/2,              % ServerName, Stream
-             subscription/2,            % Stream, Channel
-             listening/2                % Stream, Thread
+:- dynamic ( connection/2               % ServerName, Stream
            ) as volatile.
 
 %!  redis_server(+ServerName, +Address, +Options) is det.
@@ -508,6 +508,8 @@ bind_reply(_Command, _).
 %   error (i.e., a network or disconnected peer),  wait a little and try
 %   running Goal again.
 
+:- meta_predicate recover(+, +, 0).
+
 recover(Error, Redis, Goal) :-
     reconnect_error(Error),
     auto_reconnect(Redis),
@@ -861,80 +863,163 @@ info_line_term(Line, Term) :-
 		 *            SUBSCRIBE		*
 		 *******************************/
 
-%!  redis_subscribe(+Redis, +Channels) is det.
-%!  redis_unsubscribe(+Redis, +Channels) is det.
+%!  redis_subscribe(+Redis, +Channels, -Id, +Options) is det.
 %
-%   Subscribe to one or more Redis  PUB/SUB channels. Multiple subscribe
-%   and unsubscribe messages may be issued on the same Redis connection.
-%   The first thread that subscribes  on   a  channel blocks, forwarding
-%   events using broadcast/1 using the following message. Here `Channel`
-%   is an atom denoting the channal that   received a message and `Data`
-%   is a string containing the message data.
+%   Subscribe to one or more  Redis   PUB/SUB  channels.  This predicate
+%   creates a thread using thread_create/3 with  the given Options. Once
+%   running, the thread listens for messages.   The message content is a
+%   string or Prolog term  as  described   in  redis/3.  On  receiving a
+%   message, the following message is broadcasted:
 %
-%       redis(Redis, Channel, Data)
+%       redis(Id, Channel, Data)
 %
-%   If redis_unsubscribe/2 removes the last   subscription, the blocking
-%   redis_subscribe/2 completes.
+%   If redis_unsubscribe/2 removes the  last   subscription,  the thread
+%   terminates.
 %
-%   redis_subscribe/2 is normally executed in a  thread. To simply print
-%   the incomming messages use e.g.
+%   To simply print the incomming messages use e.g.
 %
 %       ?- listen(redis(_, Channel, Data),
 %                 format('Channel ~p got ~p~n', [Channel,Data])).
 %       true.
-%       ?- redis_connect(Redis),
-%          thread_create(redis_subscribe(Redis, [test]), Id, []).
-%       Redis = ..., Id = ...,
+%       ?- redis_subscribe(default, test, Id, []).
+%       Id = redis_pubsub_3,
 %       ?- redis(publish(test, "Hello world")).
 %       Channel test got "Hello world"
 %       1
 %       true.
+%
+%   @arg Id is the thread identifier of  the listening thread. Note that
+%   the Options alias(Name) can be used to get a system wide name.
 
+:- dynamic ( subscription/2,            % Id, Channel
+             listening/3                % Id, Connection, Thread
+           ) as volatile.
 
-redis_subscribe(Redis, Channels) :-
-    redis_stream(Redis, S, true),
-    Req =.. [subscribe|Channels],
-    redis_write_msg(S, Req),
-    maplist(register_subscription(S), Channels),
-    (   listening(S, _Thread)
-    ->  true
-    ;   redis_listen(Redis)
-    ).
-
-redis_unsubscribe(Redis, Channels) :-
-    redis_stream(Redis, S, true),
-    Req =.. [unsubscribe|Channels],
-    redis_write_msg(S, Req),
-    maplist(unregister_subscription(S), Channels).
-
-register_subscription(S, Channel) :-
-    (   subscription(S, Channel)
-    ->  true
-    ;   assertz(subscription(S, Channel))
-    ).
-
-unregister_subscription(S, Channel) :-
-    retractall(subscription(S, Channel)).
-
-redis_listen(Redis) :-
-    redis_stream(Redis, S, true),
-    listening(S, _Thread),
+redis_subscribe(Redis, Spec, Id, Options) :-
+    atom(Redis),
     !,
-    permission_error(listen, redis, S).
-redis_listen(Redis) :-
-    redis_stream(Redis, S, true),
+    channels(Spec, Channels),
+    pubsub_thread_options(ThreadOptions, Options),
+    thread_create(setup_call_cleanup(
+                      redis_connect(Redis, Conn, [reconnect(true)]),
+                      redis_subscribe1(Redis, Conn, Channels),
+                      redis_disconnect(Conn)),
+                  Thread,
+                  ThreadOptions),
+    pubsub_id(Thread, Id).
+redis_subscribe(Redis, Spec, Id, Options) :-
+    channels(Spec, Channels),
+    pubsub_thread_options(ThreadOptions, Options),
+    thread_create(redis_subscribe1(Redis, Redis, Channels),
+                  Thread,
+                  ThreadOptions),
+    pubsub_id(Thread, Id).
+
+pubsub_thread_options(ThreadOptions, Options) :-
+    merge_options(Options, [detached(true)], ThreadOptions).
+
+pubsub_id(Thread, Thread).
+%pubsub_id(Thread, Id) :-
+%    thread_property(Thread, id(TID)),
+%    atom_concat('redis_pubsub_', TID, Id).
+
+redis_subscribe1(Redis, Conn, Channels) :-
+    Error = error(Formal, _),
+    catch(redis_subscribe2(Redis, Conn, Channels), Error, true),
+    (   var(Formal)
+    ->  true
+    ;   recover(Error, Conn, redis1(Conn, echo("reconnect"), _)),
+        thread_self(Me),
+        pubsub_id(Me, Id),
+        findall(Channel, subscription(Id, Channel), CurrentChannels),
+        redis_subscribe1(Redis, Conn, CurrentChannels)
+    ).
+
+redis_subscribe2(Redis, Conn, Channels) :-
+    redis_subscribe3(Conn, Channels),
+    redis_listen(Redis, Conn).
+
+redis_subscribe3(Conn, Channels) :-
     thread_self(Me),
+    pubsub_id(Me, Id),
+    prolog_listen(this_thread_exit, pubsub_clean(Id)),
+    maplist(register_subscription(Id), Channels),
+    redis_stream(Conn, S, true),
+    Req =.. [subscribe|Channels],
+    redis_write_msg(S, Req).
+
+pubsub_clean(Id) :-
+    retractall(listening(Id, _Connection, _Thread)),
+    retractall(subscription(Id, _Channel)).
+
+%!  redis_subscribe(+Id, +Channels) is det.
+%!  redis_unsubscribe(+Id, +Channels) is det.
+%
+%   Add/remove channels from for the   subscription. If no subscriptions
+%   remain, the listening thread terminates.
+
+redis_subscribe(Id, Spec) :-
+    channels(Spec, Channels),
+    (   listening(Id, Connection, _Thread)
+    ->  true
+    ;   existence_error(redis_pubsub, Id)
+    ),
+    maplist(register_subscription(Id), Channels),
+    redis_stream(Connection, S, true),
+    Req =.. [subscribe|Channels],
+    redis_write_msg(S, Req).
+
+redis_unsubscribe(Id, Spec) :-
+    channels(Spec, Channels),
+    (   listening(Id, Connection, _Thread)
+    ->  true
+    ;   existence_error(redis_pubsub, Id)
+    ),
+    maplist(unregister_subscription(Id), Channels),
+    redis_stream(Connection, S, true),
+    Req =.. [unsubscribe|Channels],
+    redis_write_msg(S, Req).
+
+%!  redis_current_subscription(?Id, ?Channels)
+%
+%   True when a PUB/SUB subscription with Id is listening on Channels.
+
+redis_current_subscription(Id, Channels) :-
+    findall(Id-Channel, subscription(Id, Channel), Pairs),
+    keysort(Pairs, Sorted),
+    group_pairs_by_key(Sorted, Grouped),
+    member(Id-Channels, Grouped).
+
+channels(List, List) :-
+    is_list(List),
+    !,
+    must_be(list(atom), List).
+channels(Ch, [Ch]) :-
+    must_be(atom, Ch).
+
+register_subscription(Id, Channel) :-
+    (   subscription(Id, Channel)
+    ->  true
+    ;   assertz(subscription(Id, Channel))
+    ).
+
+unregister_subscription(Id, Channel) :-
+    retractall(subscription(Id, Channel)).
+
+redis_listen(Redis, Conn) :-
+    thread_self(Me),
+    pubsub_id(Me, Id),
     setup_call_cleanup(
-        assertz(listening(S, Me), Ref),
-        redis_listen_loop(Redis),
+        assertz(listening(Id, Conn, Me), Ref),
+        redis_listen_loop(Redis, Id, Conn),
         erase(Ref)).
 
-redis_listen_loop(Redis) :-
-    redis_stream(Redis, S, true),
-    (   subscription(S, _)
+redis_listen_loop(Redis, Id, Conn) :-
+    redis_stream(Conn, S, true),
+    (   subscription(Id, _)
     ->  redis_read_stream(Redis, S, Reply),
         redis_broadcast(Redis, Reply),
-        redis_listen_loop(Redis)
+        redis_listen_loop(Redis, Id, Conn)
     ;   true
     ).
 
