@@ -94,6 +94,28 @@
 :- setting(max_retry_wait, number, 10,
            "Max time to wait between recovery attempts").
 
+:- predicate_options(redis_server/3, 3,
+                     [ pass_to(redis:redis_connect/3, 3)
+                     ]).
+:- predicate_options(redis_connect/3, 3,
+                     [ reconnect(boolean),
+                       user(atom),
+                       password(atomic),
+                       version(between(2,3))
+                     ]).
+:- predicate_options(redis_disconnect/2, 2,
+                     [ force(boolean)
+                     ]).
+:- predicate_options(redis_scan/3, 3,
+                     [ match(atomic),
+                       count(nonneg),
+                       type(atom)
+                     ]).
+% Actually not passing, but the same
+:- predicate_options(redis_sscan/4, 4, [pass_to(redis:redis_scan/3, 3)]).
+:- predicate_options(redis_hscan/4, 4, [pass_to(redis:redis_scan/3, 3)]).
+:- predicate_options(redis_zscan/4, 4, [pass_to(redis:redis_scan/3, 3)]).
+
 
 /** <module> Redis client
 
@@ -126,11 +148,11 @@ User = "Bob"
 %   acts as a lazy connection alias.  Initially the ServerName `default`
 %   points at `localhost:6379` with no   connect  options. The `default`
 %   server is used for redis/1 and redis/2 and may be changed using this
-%   predicate.
+%   predicate.  Options are described with redis_connect/3.
 %
-%   Connections established this way are   automatically  reconnected if
-%   the connection is lost for  some   reason  unless a reconnect(false)
-%   option is specified.
+%   Connections  established  this  way  are  by  default  automatically
+%   reconnected if the connection  is  lost   for  some  reason unless a
+%   reconnect(false) option is specified.
 
 redis_server(Alias, Address, Options) :-
     must_be(ground, Alias),
@@ -709,9 +731,9 @@ pairs_to_array([Name-Value|T0], [NameS,Value|T]) :-
     pairs_to_array(T0, T).
 
 %!  redis_scan(+Redis, -LazyList, +Options) is det.
-%!  redis_sscan(+Redis, -LazyList, +Options) is det.
-%!  redis_hscan(+Redis, -LazyList, +Options) is det.
-%!  redis_zscan(+Redis, -LazyList, +Options) is det.
+%!  redis_sscan(+Redis, +Set, -LazyList, +Options) is det.
+%!  redis_hscan(+Redis, +Hash, -LazyList, +Options) is det.
+%!  redis_zscan(+Redis, +Set, -LazyList, +Options) is det.
 %
 %   Map the Redis ``SCAN``, ``SSCAN``,   ``HSCAN`` and `ZSCAN`` commands
 %   into a _lazy list_. For redis_scan/3 and redis_sscan/4 the result is

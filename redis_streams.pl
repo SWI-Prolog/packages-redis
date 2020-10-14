@@ -54,6 +54,18 @@
 :- multifile
     xhook/2.                            % +Stream, +Event
 
+:- predicate_options(xlisten/3, 3,
+                     [ count(nonneg),
+                       start(one_of([$,0])),
+                       starts(list)
+                     ]).
+:- predicate_options(xlisten_group/5, 5,
+                     [ block(number),
+                       max_deliveries(nonneg),
+                       max_claim(nonneg)
+                     ]).
+
+
 /** <module> Using Redis streams
 
 A Redis stream is a set of   messages consisting of key-value pairs that
