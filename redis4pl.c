@@ -706,13 +706,13 @@ redis_write_stream(IOSTREAM *out, term_t message)
 
 
 static foreign_t
-redis_write_msg(term_t into, term_t message)
+write_msg(term_t into, term_t message, int flush)
 { IOSTREAM *out;
 
   if ( PL_get_stream(into, &out, SIO_OUTPUT) )
   { int rc = redis_write_stream(out, message);
 
-    if ( rc )
+    if ( rc && flush )
       rc = Sflush(out) == 0;
 
     if ( Sferror(out) )
@@ -727,6 +727,15 @@ redis_write_msg(term_t into, term_t message)
 }
 
 
+static foreign_t
+redis_write_msg(term_t into, term_t message)
+{ return write_msg(into, message, TRUE);
+}
+
+static foreign_t
+redis_write_msg_no_flush(term_t into, term_t message)
+{ return write_msg(into, message, FALSE);
+}
 
 
 		 /*******************************
@@ -746,6 +755,7 @@ install_redis4pl(void)
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);
 
-  PL_register_foreign("redis_read_msg",  3, redis_read_msg,  0);
-  PL_register_foreign("redis_write_msg", 2, redis_write_msg, 0);
+  PL_register_foreign("redis_read_msg",		  3, redis_read_msg,	       0);
+  PL_register_foreign("redis_write_msg",	  2, redis_write_msg,	       0);
+  PL_register_foreign("redis_write_msg_no_flush", 2, redis_write_msg_no_flush, 0);
 }

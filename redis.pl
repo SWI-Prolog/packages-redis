@@ -102,11 +102,11 @@ value store to  deal  with  caching   and  communication  between  micro
 services.
 
 In the typical use case we register  the   details  of one or more Redis
-servers using redis_server/3. Subsequenly, redis/1-3   is  used to issue
+servers using redis_server/3. Subsequenly, redis/2-3   is  used to issue
 commands on the server.  For example:
 
 ```
-?- redis_server(default, 'redis':6379, [password("secret")]).
+?- redis_server(default, redis:6379, [password("secret")]).
 ?- redis(default, set(user, "Bob")).
 ?- redis(default, get(user), User).
 User = "Bob"
@@ -316,25 +316,82 @@ redis_disconnect(Redis, _Options) :-
     retractall(connection(_,S)).
 
 %!  redis(+Connection, +Request) is semidet.
-%!  redis(+Connection, +Request, -Reply) is semidet.
 %
-%   Execute a redis command on Connnection.   The first executes Request
-%   on the `default` connection and ignores   the  result unless this is
-%   `nil`, or an error. The redis/2 form   runs redis/3 on the `default`
-%   connection. The full redis/3 executes Request   and binds the result
-%   to Reply.  Reply is one of:
+%   This predicate is overloaded to handle two types of requests. First,
+%   it is a shorthand for `redis(Connection, Command, _)` and second, it
+%   can be used to exploit  Redis   _pipelines_  and _transactions_. The
+%   second form is acticated if Request is  a _list_. In that case, each
+%   element of the list is either a term  `Command -> Reply` or a simple
+%   `Command`. Semantically this represents a   sequence  of redis/3 and
+%   redis/2 calls.  It differs in the following aspects:
 %
-%     - status(String)
-%     - A number
-%     - A string
-%     - A list of replies.  A list may also contain `nil`.  If Reply
-%       as a whole would be `nil` the call fails.
+%     - All commands are sent in one batch, after which all replies are
+%       read.  This reduces the number of _round trips_ and typically
+%       greatly improves performance.
+%     - If the first command is `multi` and the last `exec`, the
+%       commands are executed as a Redis _transaction_, i.e., they
+%       are executed _atomically_.
+%     - If one of the commands returns an error, the subsequent commands
+%       __are still executed__.
+%     - You can not use variables from commands earlier in the list for
+%       commands later in the list as a result of the above execution
+%       order.
 %
-%   @error redis_error(String)
+%   Procedurally, the process takes the following steps:
+%
+%     1. Send all commands
+%     2. Read all replies and push messages
+%     3. Handle all callbacks from push messages
+%     4. Check whether one of the replies is an error.  If so,
+%        raise this error (subsequent errors are lost)
+%     5. Bind all replies for the `Command -> Reply` terms.
+%
+%   Examples
+%
+%   ```
+%   ?- redis(default,
+%            [ lpush(li,1),
+%              lpush(li,2),
+%              lrange(li,0,-1) -> List
+%            ]).
+%   List = ["2", "1"].
+%   ```
 
+redis(Redis, PipeLine) :-
+    is_list(PipeLine),
+    !,
+    redis_pipeline(Redis, PipeLine).
 redis(Redis, Req) :-
     redis1(Redis, Req, Out),
     Out \== nil.
+
+%!  redis(+Connection, +Command, -Reply) is semidet.
+%
+%   Execute a redis Command on  Connnection.   Next,  bind  Reply to the
+%   returned result. Reply is one of:
+%
+%     - status(String)
+%       Returned if the server replies with ``+ Status``.
+%     - `nil`
+%       This atom is returned for a NIL/NULL value.  Note that if
+%       the reply is only `nil`, redis/3 _fails_.  The `nil` value
+%       may be embedded inside lists or maps.
+%     - A number
+%       Returned if the server replies an integer (":Int"), double
+%       (",Num") or big integer ("(Num")
+%     - A string
+%       Returned on a _bulk_ reply.  Bulk replies are supposed to be
+%       in UTF-8 encoding.  The the bulk reply starts with
+%       "\u0000T\u0000" it is supposed to be a Prolog term.
+%       Note that this intepretation means it is __not__ possible
+%       to read arbitrary binary blobs.
+%     - A list of replies.  A list may also contain `nil`.  If Reply
+%       as a whole would be `nil` the call fails.
+%     - A list of _pairs_.  This is returned for the redis version 3
+%       protocol "%Map".  Both the key and value respect the same
+%       rules as above.
+%
+%   @error redis_error(Code, String)
 
 redis(Redis, Req, Out) :-
     redis1(Redis, Req, Out),
@@ -345,7 +402,7 @@ redis1(Redis, Req, Out) :-
     catch(redis2(Redis, Req, Out), Error, true),
     (   var(Formal)
     ->  true
-    ;   recover(Error, Redis, Req, Out)
+    ;   recover(Error, Redis, redis1(Redis, Req, Out))
     ).
 
 redis2(Redis, Req, Out) :-
@@ -361,7 +418,75 @@ redis2(Redis, Req, Out) :-
     redis_write_msg(S, Req),
     redis_read_stream(Redis, S, Out).
 
-recover(Error, Redis, Req, Out) :-
+%!  redis_pipeline(+Redis, +PipeLine)
+
+redis_pipeline(Redis, PipeLine) :-
+    Error = error(Formal, _),
+    catch(redis_pipeline2(Redis, PipeLine), Error, true),
+    (   var(Formal)
+    ->  true
+    ;   recover(Error, Redis, redis_pipeline(Redis, PipeLine))
+    ).
+
+redis_pipeline2(Redis, PipeLine) :-
+    atom(Redis),
+    !,
+    redis_stream(Redis, S, true),
+    with_mutex(Redis,
+               redis_pipeline3(Redis, S, PipeLine)).
+redis_pipeline2(Redis, PipeLine) :-
+    redis_stream(Redis, S, true),
+    redis_pipeline3(Redis, S, PipeLine).
+
+redis_pipeline3(Redis, S, PipeLine) :-
+    maplist(write_pipeline(S), PipeLine),
+    flush_output(S),
+    read_pipeline(Redis, S, PipeLine).
+
+write_pipeline(S, Command -> _Reply) :-
+    !,
+    redis_write_msg_no_flush(S, Command).
+write_pipeline(S, Command) :-
+    redis_write_msg_no_flush(S, Command).
+
+read_pipeline(Redis, S, PipeLine) :-
+    E = error(Formal,_),
+    catch(read_pipeline2(Redis, S, PipeLine), E, true),
+    (   var(Formal)
+    ->  true
+    ;   print_message(warning, E),
+        redis_disconnect(Redis, [force(true)]),
+        throw(E)
+    ).
+
+read_pipeline2(Redis, S, PipeLine) :-
+    maplist(redis_read_msg3(S), PipeLine, Replies, Pushed),
+    maplist(handle_push(Redis), Pushed),
+    maplist(handle_error, Replies),
+    maplist(bind_reply, PipeLine, Replies).
+
+redis_read_msg3(S, _, Reply, Push) :-
+    redis_read_msg(S, Reply, Push).
+handle_push(Redis, Pushed) :-
+    handle_push_messages(Pushed, Redis).
+handle_error(Error) :-
+    (   functor(Error, error, 2)
+    ->  throw(Error)
+    ;   true
+    ).
+bind_reply(_Command -> Reply0, Reply) :-
+    !,
+    Reply0 = Reply.
+bind_reply(_Command, _).
+
+
+%!  recover(+Error, +Redis, :Goal)
+%
+%   Error happened while running Goal on Redis. If this is a recoverable
+%   error (i.e., a network or disconnected peer),  wait a little and try
+%   running Goal again.
+
+recover(Error, Redis, Goal) :-
     reconnect_error(Error),
     auto_reconnect(Redis),
     !,
@@ -369,11 +494,11 @@ recover(Error, Redis, Req, Out) :-
           [Redis, Error]),
     redis_disconnect(Redis, [force(true)]),
     (   wait(Redis)
-    ->  redis1(Redis, Req, Out),
+    ->  call(Goal),
         retractall(failure(Redis, _))
     ;   throw(Error)
     ).
-recover(Error, _, _, _) :-
+recover(Error, _, _) :-
     throw(Error).
 
 auto_reconnect(redis_connection(_,_,_,Options)) :-
@@ -832,8 +957,6 @@ redis_read_stream(Redis, SI, Out) :-
         ->  throw(Out0)
         ;   Out = Out0
         )
-    ;   Formal = redis_error(_Code, _Message)
-    ->  throw(E)
     ;   print_message(warning, E),
         redis_disconnect(Redis, [force(true)]),
         throw(E)
