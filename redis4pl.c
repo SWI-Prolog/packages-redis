@@ -43,6 +43,18 @@ static int unexpected_eof(IOSTREAM *in);
 static int newline_expected(IOSTREAM *in);
 
 static atom_t ATOM_rnil;
+static atom_t ATOM_atom;
+static atom_t ATOM_string;
+static atom_t ATOM_bytes;
+static atom_t ATOM_codes;
+static atom_t ATOM_chars;
+static atom_t ATOM_integer;
+static atom_t ATOM_float;
+static atom_t ATOM_rational;
+static atom_t ATOM_number;
+static atom_t ATOM_utf8;
+static atom_t ATOM_text;
+
 static functor_t FUNCTOR_status1;
 static functor_t FUNCTOR_prolog1;
 static functor_t FUNCTOR_pair2;
@@ -210,12 +222,16 @@ redis_error(char *s, term_t msg)
 		 *******************************/
 
 typedef enum redis_type_kind
-{ T_ATOM,
-  T_STRING
+{ T_TEXT,
+  T_INTEGER,
+  T_FLOAT,
+  T_RATIONAL,
+  T_NUMBER
 } redis_type_kind;
 
 typedef struct redis_type
 { redis_type_kind	kind;		/* T_ATOM, ... */
+  int			pltype;		/* PL_* */
   int			encoding;	/* REP_* */
 } redis_type;
 
@@ -468,6 +484,91 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, redis_type *type)
 }
 
 
+static char *
+type_name(redis_type *type)
+{ switch(type->kind)
+  { case T_INTEGER:  return "integer";
+    case T_FLOAT:    return "float";
+    case T_RATIONAL: return "rational";
+    case T_NUMBER:   return "number";
+    default:	     return "unknown";
+  }
+}
+
+
+static int
+unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *type)
+{ if ( len > 3 &&
+       data[0] == '\0' &&
+       data[2] == '\0' )
+  { switch(data[1])
+    { case 'T':
+      { term_t t;
+
+	return ( (t=PL_new_term_ref()) &&
+		 PL_put_term_from_chars(t, REP_UTF8,
+					len-3, data+3) &&
+		 PL_unify(message, t) &&
+		 (PL_reset_term_refs(t),TRUE) );
+      }
+    }
+  }
+
+  if ( type->kind == T_TEXT )
+  { return PL_unify_chars(message, type->pltype|type->encoding, len, data);
+  } else if ( type->kind >= T_INTEGER && type->kind <= T_NUMBER)
+  { term_t t;
+
+    if ( ((t=PL_new_term_ref()) &&
+	  PL_put_term_from_chars(t, REP_ISO_LATIN_1, len, data)) )
+    { int rc;
+
+      switch(type->kind)
+      { case T_INTEGER:
+	  rc = PL_is_integer(t);
+	  break;
+	case T_FLOAT:
+	  if ( !(rc = PL_is_float(t)) )
+	  { double d;
+
+	    rc = ( PL_get_float(t, &d) &&
+		   PL_put_float(t, d) );
+	  }
+	  break;
+	case T_RATIONAL:
+	  rc = PL_is_rational(t);
+	  break;
+	case T_NUMBER:
+	  rc = PL_is_number(t);
+	  break;
+	default:
+	  assert(0);
+	  rc = FALSE;
+      }
+
+      if ( rc )
+      { rc = PL_unify(message, t);
+      } else
+      { rc = ( PL_put_variable(t) &&
+	       PL_unify_chars(t, PL_STRING|REP_UTF8, len, data) &&
+	       PL_unify_term(error,
+			     PL_FUNCTOR_CHARS, "error", 2,
+			       PL_FUNCTOR_CHARS, "type_error", 2,
+			         PL_CHARS, type_name(type),
+			         PL_TERM, t,
+			       PL_VARIABLE) );
+      }
+
+      return rc;
+    } else
+      return FALSE;
+  } else
+  { assert(0);
+    return FALSE;
+  }
+}
+
+
 static int
 redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
 		  redis_type *type)
@@ -542,38 +643,16 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
     case '$':
     { if ( (rc=read_bulk(in, &cb)) )
       { if ( rc == -1 )
-	{ rc = PL_unify_atom(message, ATOM_rnil);
-	} else
-	{ if ( cb.here-cb.base > 3 &&
-	       cb.base[0] == '\0' &&
-	       cb.base[2] == '\0' )
-	  { switch(cb.base[1])
-	    { case 'T':
-	      { term_t t;
-
-		rc = ( (t=PL_new_term_ref()) &&
-		       PL_put_term_from_chars(t, REP_UTF8,
-					      cb.here-cb.base-3, cb.base+3) &&
-		       PL_unify(message, t) &&
-		       (PL_reset_term_refs(t),TRUE) );
-		goto done_bulk;
-	      }
-	    }
-	  }
-
-	  rc = PL_unify_chars(message, PL_STRING|REP_UTF8,
-			      cb.here-cb.base, cb.base);
-	}
+	  rc = PL_unify_atom(message, ATOM_rnil);
+	else
+	  rc = unify_bulk(message, error, cb.here-cb.base, cb.base, type);
       }
 
-    done_bulk:
       break;
     }
     case '=':				/* RESP3 Verbatim string */
     { if ( (rc=read_bulk(in, &cb)) )
-      { rc = PL_unify_chars(message, PL_STRING|REP_UTF8,
-			    cb.here-cb.base-4, cb.base+4);
-      }
+	rc = unify_bulk(message, error, cb.here-cb.base-4, cb.base+4, type);
 
       break;
     }
@@ -632,7 +711,54 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
 
 static int
 get_as_type(term_t t, redis_type *type)
-{ return TRUE;
+{ atom_t name;
+  size_t arity;
+
+  if ( PL_get_name_arity(t, &name, &arity) )
+  { if ( name == ATOM_atom )
+      type->pltype = PL_ATOM;
+    else if ( name == ATOM_string )
+      type->pltype = PL_STRING;
+    else if ( name == ATOM_bytes )
+      type->pltype = PL_CODE_LIST, type->encoding = REP_ISO_LATIN_1;
+    else if ( name == ATOM_codes )
+      type->pltype = PL_CODE_LIST;
+    else if ( name == ATOM_chars )
+      type->pltype = PL_CHAR_LIST;
+    else if ( name == ATOM_integer )
+      type->kind = T_INTEGER;
+    else if ( name == ATOM_float )
+      type->kind = T_FLOAT;
+    else if ( name == ATOM_rational )
+      type->kind = T_RATIONAL;
+    else if ( name == ATOM_number )
+      type->kind = T_NUMBER;
+    else
+      return PL_domain_error("redis_type", t);
+
+    if ( arity == 1 )
+    { term_t a = PL_new_term_ref();
+      atom_t an;
+
+      _PL_get_arg(1, t, a);
+      if ( !PL_get_atom_ex(a, &an) )
+	return FALSE;
+
+      if ( an == ATOM_bytes )
+	type->encoding = REP_ISO_LATIN_1;
+      else if ( an == ATOM_utf8 )
+	type->encoding = REP_UTF8;
+      else if ( an == ATOM_text )
+	type->encoding = REP_MB;
+      else
+	return PL_type_error("encoding", a);
+    } else if ( arity != 0 )
+      return PL_type_error("redis_type", t);
+
+    return TRUE;
+  }
+
+  return PL_type_error("redis_type", t);
 }
 
 
@@ -640,7 +766,8 @@ static foreign_t
 redis_read_msg(term_t from, term_t msgin, term_t msgout,
 	       term_t error, term_t push)
 { IOSTREAM *in;
-  redis_type rt = { .kind     = T_STRING,
+  redis_type rt = { .kind     = T_TEXT,
+		    .pltype   = PL_STRING,
 		    .encoding = REP_UTF8
 		  };
   term_t msg;
@@ -877,6 +1004,19 @@ install_redis4pl(void)
   FUNCTOR_pair2   = PL_new_functor(PL_new_atom("-"), 2);
   FUNCTOR_colon2  = PL_new_functor(PL_new_atom(":"), 2);
   FUNCTOR_attrib2 = PL_new_functor(PL_new_atom("$REDISATTRIB$"), 2);
+
+  MKATOM(atom);
+  MKATOM(string);
+  MKATOM(bytes);
+  MKATOM(codes);
+  MKATOM(chars);
+  MKATOM(integer);
+  MKATOM(float);
+  MKATOM(rational);
+  MKATOM(number);
+  MKATOM(utf8);
+  MKATOM(text);
+
   MKFUNCTOR(as, 2);
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);

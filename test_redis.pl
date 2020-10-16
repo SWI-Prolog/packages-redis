@@ -81,7 +81,8 @@ test_redis(Options) :-
                 redis_lists,
                 redis_hashes,
                 redis_prolog,
-                redis_groups
+                redis_groups,
+                redis_types
               ]).
 
 redis_server_address(Host:Port) :-
@@ -493,6 +494,43 @@ xwait(Redis, MaxTime, Stream, Group) :-
         sleep(0.1),
         fail
     ).
+
+
+:- begin_tests(redis_types).
+
+test(as_int, cleanup(rcleanup(test_redis, [test_type]))) :-
+    redis(test_redis, set(test_type, 42)),
+    expects(integer, 42),
+    expects(rational, 42),
+    expects(string, "42"),
+    expects(codes, `42`),
+    expects(chars, ['4', '2']),
+    expects(atom, '42'),
+    expects(float, 42.0).
+test(as_float, cleanup(rcleanup(test_redis, [test_type]))) :-
+    redis(test_redis, set(test_type, 0.33)),
+    expects(float, 0.33),
+    expects(number, 0.33),
+    expect_error(integer, type_error(integer, "0.33")),
+    expect_error(rational, type_error(rational, "0.33")).
+test(as_rat, cleanup(rcleanup(test_redis, [test_type]))) :-
+    redis(test_redis, set(test_type, "1r3")),
+    redis(test_redis, get(test_type), Reply as float),
+    assertion(Reply =:= 1/3),
+    expects(rational, 1r3),
+    expects(number, 1r3),
+    expect_error(integer, type_error(integer, "1r3")).
+
+expect_error(Target, Error) :-
+    catch(redis(test_redis, get(test_type), _ as Target), E, true),
+    assertion(subsumes_term(error(Error, _), E)).
+
+expects(Target, Value) :-
+    redis(test_redis, get(test_type), Reply as Target),
+    assertion(Reply == Value).
+
+:- end_tests(redis_types).
+
 
 
 		 /*******************************

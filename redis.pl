@@ -404,7 +404,9 @@ redis(Redis, Req) :-
 %       by Term in canonical form.
 %     - Any other term is emitted as write/1.
 %
-%   Reply is one of:
+%   Reply is either a plain term (often a  variable) or a term `Value as
+%   Type`. In the latter form,  `Type`   dictates  how  the Redis _bulk_
+%   reply is translated to Prolog. The default equals to string(utf8).
 %
 %     - status(String)
 %       Returned if the server replies with ``+ Status``.
@@ -427,6 +429,32 @@ redis(Redis, Req) :-
 %       protocol "%Map".  Both the key and value respect the same
 %       rules as above.
 %
+%   Redis _bulk_ replies are translated depending  on the `as` `Type` as
+%   explained above.
+%
+%     - string
+%     - string(Encoding)
+%       Create a SWI-Prolog string object interpreting the blob as
+%       following Encoding. Encoding is a restricted set of SWI-Prolog's
+%       encodings: `bytes` (`iso_latin_1`), `utf8` and `text` (the
+%       current locale translation).
+%     - atom
+%     - atom(Encoding)
+%       As above, producing an atom.
+%     - codes
+%     - codes(Encoding)
+%       As above, producing a list of integers (Unicode code points)
+%     - chars
+%     - chars(Encoding)
+%       As above, producing a list of one-character atoms.
+%     - integer
+%     - float
+%     - rational
+%     - number
+%       Interpret the bytes as a string representing a number.  If
+%       the string does not represent a number of the requested type
+%       a type_error(Type, String) is raised.
+%
 %   Here are some simple examples
 %
 %   ```
@@ -434,6 +462,10 @@ redis(Redis, Req) :-
 %   X = status("OK").
 %   ?- redis(default, get(a), X).
 %   X = "42".
+%   ?- redis(default, get(a), X as integer).
+%   X = 42.
+%   ?- redis(default, get(a), X as float).
+%   X = 42.0.
 %   ?- redis(default, set(swipl:version, 8)).
 %   true.
 %   ?- redis(default, incr(swipl:version), X).
