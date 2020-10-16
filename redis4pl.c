@@ -47,6 +47,7 @@ static functor_t FUNCTOR_status1;
 static functor_t FUNCTOR_prolog1;
 static functor_t FUNCTOR_pair2;
 static functor_t FUNCTOR_attrib2;
+static functor_t FUNCTOR_colon2;
 
 
 		 /*******************************
@@ -98,7 +99,7 @@ ensure_space_charbuf(charbuf *cb, size_t space)
     } else
     { char *n = realloc(cb->base, nlen);
       if ( !n )
-	return FALSE;
+	return PL_resource_error("memory");
       cb->base = n;
     }
     cb->here = &cb->base[sz];
@@ -668,6 +669,68 @@ redis_write_typed(IOSTREAM *out, term_t t, int type, int flags)
 
 
 static int
+redis_write_key(IOSTREAM *out, term_t key)
+{ term_t a1 = PL_new_term_ref();
+  term_t t  = PL_copy_term_ref(key);
+  charbuf cb;
+  char *s;
+  int rc = TRUE;
+  size_t len;
+  int flags = CVT_ATOM|CVT_STRING|CVT_LIST|CVT_INTEGER;
+
+  init_charbuf(&cb);
+
+  do
+  { _PL_get_arg(1, t, a1);
+    _PL_get_arg(2, t, t);
+
+    PL_STRINGS_MARK();
+    if ( (rc=PL_get_nchars(a1, &len, &s, flags)) )
+    { if ( (rc=ensure_space_charbuf(&cb, len+1)) )
+      { memcpy(cb.here, s, len);
+	cb.here += len;
+	*cb.here++ = ':';
+      } else
+      { rc = -1;
+      }
+    }
+    PL_STRINGS_RELEASE();
+    if ( rc != TRUE )
+      goto out;
+  } while( PL_is_functor(t, FUNCTOR_colon2) );
+
+  PL_STRINGS_MARK();
+  if ( (rc=PL_get_nchars(t, &len, &s, flags)) )
+  { if ( (rc=ensure_space_charbuf(&cb, len)) )
+    { memcpy(cb.here, s, len);
+      cb.here += len;
+    } else
+    { rc = -1;
+    }
+  }
+  PL_STRINGS_RELEASE();
+
+  if ( rc == TRUE )
+  { len = cb.here - cb.base;
+    if ( !(Sfprintf(out, "$%zd\r\n", len) >= 0 &&
+	   Sfwrite(cb.base, 1, len, out) == len &&
+	   Sfprintf(out, "\r\n") >= 0) )
+      rc = -1;
+  }
+
+out:
+  if ( rc == FALSE )
+  { rc = redis_write_one(out, key, CVT_WRITE);
+  } else if ( rc == -1 )
+  { rc = FALSE;
+  }
+
+  free_charbuf(&cb);
+  return rc;
+}
+
+
+static int
 redis_write_stream(IOSTREAM *out, term_t message)
 { atom_t name;
   size_t arity;
@@ -686,6 +749,9 @@ redis_write_stream(IOSTREAM *out, term_t message)
 
 	if ( PL_is_atomic(arg) )
 	{ if ( !redis_write_one(out, arg, CVT_ATOMIC) )
+	    return FALSE;
+	} else if ( PL_is_functor(arg, FUNCTOR_colon2) )
+	{ if ( !redis_write_key(out, arg) )
 	    return FALSE;
 	} else if ( PL_is_functor(arg, FUNCTOR_prolog1) )
 	{ _PL_get_arg(1, arg, arg);
@@ -751,6 +817,7 @@ install_t
 install_redis4pl(void)
 { ATOM_rnil       = PL_new_atom("nil");
   FUNCTOR_pair2   = PL_new_functor(PL_new_atom("-"), 2);
+  FUNCTOR_colon2  = PL_new_functor(PL_new_atom(":"), 2);
   FUNCTOR_attrib2 = PL_new_functor(PL_new_atom("$REDISATTRIB$"), 2);
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);
