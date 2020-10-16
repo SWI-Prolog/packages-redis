@@ -48,6 +48,7 @@ static functor_t FUNCTOR_prolog1;
 static functor_t FUNCTOR_pair2;
 static functor_t FUNCTOR_attrib2;
 static functor_t FUNCTOR_colon2;
+static functor_t FUNCTOR_as2;
 
 
 		 /*******************************
@@ -208,7 +209,19 @@ redis_error(char *s, term_t msg)
 		 *	   READ MESSAGE		*
 		 *******************************/
 
-static int redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push);
+typedef enum redis_type_kind
+{ T_ATOM,
+  T_STRING
+} redis_type_kind;
+
+typedef struct redis_type
+{ redis_type_kind	kind;		/* T_ATOM, ... */
+  int			encoding;	/* REP_* */
+} redis_type;
+
+
+static int redis_read_stream(IOSTREAM *in, term_t msgin,
+			     term_t error, term_t push, redis_type *type);
 
 #define LEN_STREAM (-2)
 #define MSG_END    (-2)
@@ -358,7 +371,7 @@ acceptable for a dict and return a dict?
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
-read_map(IOSTREAM *in, charbuf *cb, term_t map)
+read_map(IOSTREAM *in, charbuf *cb, term_t map, redis_type *type)
 { long long v;
 
   if ( !read_length(in, cb, &v) )
@@ -373,13 +386,13 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
     { int rc;
 
       if ( !PL_put_variable(pav+0) ||
-	   !(rc=redis_read_stream(in, pav+0, 0, 0)) )
+	   !(rc=redis_read_stream(in, pav+0, 0, 0, type)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
       if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+1) ||
-	   !redis_read_stream(in, pav+1, 0, 0) ||
+	   !redis_read_stream(in, pav+1, 0, 0, type) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 			          PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
@@ -399,8 +412,8 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+0) ||
 	   !PL_put_variable(pav+1) ||
-	   !redis_read_stream(in, pav+0, 0, 0) ||
-	   !redis_read_stream(in, pav+1, 0, 0) ||
+	   !redis_read_stream(in, pav+0, 0, 0, type) ||
+	   !redis_read_stream(in, pav+1, 0, 0, type) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 			          PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
@@ -412,7 +425,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
 
 
 static int
-read_array(IOSTREAM *in, charbuf *cb, term_t array)
+read_array(IOSTREAM *in, charbuf *cb, term_t array, redis_type *type)
 { long long v;
 
   if ( !read_length(in, cb, &v) )
@@ -426,7 +439,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
     for(;;)
     { int rc;
 
-      if ( !(rc=redis_read_stream(in, tmp, 0, 0)) )
+      if ( !(rc=redis_read_stream(in, tmp, 0, 0, type)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
@@ -446,7 +459,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
 
     for(i=0; i<v; i++)
     { if ( !PL_unify_list(tail, head, tail) ||
-	   !redis_read_stream(in, head, 0, 0) )
+	   !redis_read_stream(in, head, 0, 0, type) )
 	return FALSE;
     }
 
@@ -456,7 +469,8 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
 
 
 static int
-redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
+redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
+		  redis_type *type)
 { int rc = TRUE;
   int c0 = Sgetcode(in);
   charbuf cb;
@@ -565,7 +579,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
     }
     case '~':				/* RESP3 set */
     case '*':				/* Array */
-    { rc = read_array(in, &cb, message);
+    { rc = read_array(in, &cb, message, type);
       break;
     }
     case '>':				/* RESP3 push */
@@ -574,7 +588,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
       rc = ( push != 0 &&		/* only on toplevel term */
 	     (t=PL_new_term_ref()) &&
 	     PL_unify_list(push, t, push) &&
-	     read_array(in, &cb, t) &&
+	     read_array(in, &cb, t, type) &&
 	     (PL_reset_term_refs(t),TRUE) );
       break;
     }
@@ -582,14 +596,14 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
     { term_t attrib = PL_new_term_ref();
       term_t msg    = PL_new_term_ref();
 
-      rc = ( read_map(in, &cb, attrib) &&
-	     read_map(in, &cb, msg) &&
+      rc = ( read_map(in, &cb, attrib, type) &&
+	     read_map(in, &cb, msg, type) &&
 	     PL_unify_term(message, PL_FUNCTOR, FUNCTOR_attrib2,
 				      PL_TERM, attrib, PL_TERM, msg) );
       break;
     }
     case '%':				/* RESP3 map */
-    { rc = read_map(in, &cb, message);
+    { rc = read_map(in, &cb, message, type);
       break;
     }
     case '_':				/* RESP3 nil */
@@ -615,15 +629,42 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
   return rc;
 }
 
+
+static int
+get_as_type(term_t t, redis_type *type)
+{ return TRUE;
+}
+
+
 static foreign_t
-redis_read_msg(term_t from, term_t message, term_t error, term_t push)
+redis_read_msg(term_t from, term_t msgin, term_t msgout,
+	       term_t error, term_t push)
 { IOSTREAM *in;
+  redis_type rt = { .kind     = T_STRING,
+		    .encoding = REP_UTF8
+		  };
+  term_t msg;
+
+  if ( PL_is_functor(msgin, FUNCTOR_as2) )
+  { term_t a = PL_new_term_ref();
+
+    _PL_get_arg(2, msgin, a);
+    if ( !get_as_type(a, &rt) )
+      return FALSE;
+    msg = PL_new_term_ref();
+    if ( !PL_unify_term(msgout, PL_FUNCTOR, FUNCTOR_as2,
+			          PL_TERM, msg,
+			          PL_TERM, a) )
+      return FALSE;
+  } else
+  { msg = msgout;
+  }
 
   if ( PL_get_stream(from, &in, SIO_INPUT) )
   { term_t tail = PL_copy_term_ref(push);
     int rc;
 
-    rc = ( redis_read_stream(in, message, error, tail) &&
+    rc = ( redis_read_stream(in, msg, error, tail, &rt) &&
 	   PL_unify_nil(tail) );
 
     if ( rc )
@@ -836,10 +877,11 @@ install_redis4pl(void)
   FUNCTOR_pair2   = PL_new_functor(PL_new_atom("-"), 2);
   FUNCTOR_colon2  = PL_new_functor(PL_new_atom(":"), 2);
   FUNCTOR_attrib2 = PL_new_functor(PL_new_atom("$REDISATTRIB$"), 2);
+  MKFUNCTOR(as, 2);
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);
 
-  PL_register_foreign("redis_read_msg",		  4, redis_read_msg,	       0);
+  PL_register_foreign("redis_read_msg",		  5, redis_read_msg,	       0);
   PL_register_foreign("redis_write_msg",	  2, redis_write_msg,	       0);
   PL_register_foreign("redis_write_msg_no_flush", 2, redis_write_msg_no_flush, 0);
 }

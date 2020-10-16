@@ -514,8 +514,12 @@ read_pipeline2(Redis, S, PipeLine) :-
     maplist(handle_error, Errors),
     maplist(bind_reply, PipeLine, Replies).
 
-redis_read_msg3(S, _, Reply, Error, Push) :-
-    redis_read_msg(S, Reply, Error, Push).
+redis_read_msg3(S, _Command -> ReplyIn, Reply, Error, Push) :-
+    !,
+    redis_read_msg(S, ReplyIn, Reply, Error, Push).
+redis_read_msg3(S, Var, Reply, Error, Push) :-
+    redis_read_msg(S, Var, Reply, Error, Push).
+
 handle_push(Redis, Pushed) :-
     handle_push_messages(Pushed, Redis).
 handle_error(Error) :-
@@ -1087,12 +1091,12 @@ redis_broadcast(Redis, Message) :-
 
 redis_read_stream(Redis, SI, Out) :-
     E = error(Formal,_),
-    catch(redis_read_msg(SI, Out0, Error, Push), E, true),
+    catch(redis_read_msg(SI, Out, Out0, Error, Push), E, true),
     (   var(Formal)
     ->  handle_push_messages(Push, Redis),
-        (   nonvar(Error)
-        ->  throw(Error)
-        ;   Out = Out0
+        (   var(Error)
+        ->  Out = Out0
+        ;   throw(Error)
         )
     ;   print_message(warning, E),
         redis_disconnect(Redis, [force(true)]),
