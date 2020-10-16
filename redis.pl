@@ -509,19 +509,19 @@ read_pipeline(Redis, S, PipeLine) :-
     ).
 
 read_pipeline2(Redis, S, PipeLine) :-
-    maplist(redis_read_msg3(S), PipeLine, Replies, Pushed),
+    maplist(redis_read_msg3(S), PipeLine, Replies, Errors, Pushed),
     maplist(handle_push(Redis), Pushed),
-    maplist(handle_error, Replies),
+    maplist(handle_error, Errors),
     maplist(bind_reply, PipeLine, Replies).
 
-redis_read_msg3(S, _, Reply, Push) :-
-    redis_read_msg(S, Reply, Push).
+redis_read_msg3(S, _, Reply, Error, Push) :-
+    redis_read_msg(S, Reply, Error, Push).
 handle_push(Redis, Pushed) :-
     handle_push_messages(Pushed, Redis).
 handle_error(Error) :-
-    (   functor(Error, error, 2)
-    ->  throw(Error)
-    ;   true
+    (   var(Error)
+    ->  true
+    ;   throw(Error)
     ).
 bind_reply(_Command -> Reply0, Reply) :-
     !,
@@ -1087,11 +1087,11 @@ redis_broadcast(Redis, Message) :-
 
 redis_read_stream(Redis, SI, Out) :-
     E = error(Formal,_),
-    catch(redis_read_msg(SI, Out0, Push), E, true),
+    catch(redis_read_msg(SI, Out0, Error, Push), E, true),
     (   var(Formal)
     ->  handle_push_messages(Push, Redis),
-        (   functor(Out0, error, 2)
-        ->  throw(Out0)
+        (   nonvar(Error)
+        ->  throw(Error)
         ;   Out = Out0
         )
     ;   print_message(warning, E),
@@ -1112,7 +1112,7 @@ handle_push_message(["pubsub"|List], Redis) :-
     redis_broadcast(Redis, List).
 
 
-%!  redis_read_msg(+Stream, -Message, -PushMessages) is det.
+%!  redis_read_msg(+Stream, -Message, -Error, -PushMessages) is det.
 %!  redis_write_msg(+Stream, +Message) is det.
 %
 %   Read/write a Redis message. Both these predicates are in the foreign

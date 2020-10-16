@@ -168,30 +168,47 @@ newline_expected(IOSTREAM *in)
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+redis_error() returns an error in `msg`.  `msg`   is  0  if this happens
+inside a nested term.  I  think  this   should  not  be  possible and be
+considered a protocol error. For now we throw the error as an exception.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
 redis_error(char *s, term_t msg)
 { term_t code;
   char *q;
+  term_t ex;
 
   for(q=s; *q >= 'A' && *q <= 'Z'; q++)
     *q = *q + 'a' - 'A';
 
-  return ( (code = PL_new_term_ref()) &&
-	   PL_unify_chars(code, PL_ATOM, q-s, s) &&
-	   PL_unify_term(msg,
-			 PL_FUNCTOR_CHARS, "error", 2,
-			   PL_FUNCTOR_CHARS, "redis_error", 2,
-			     PL_TERM, code,
-			     PL_STRING, q+1,
-			   PL_VARIABLE) );
+  if ( msg )
+    ex = msg;
+  else
+    ex = PL_new_term_ref();
+
+  if ( (code = PL_new_term_ref()) &&
+       PL_unify_chars(code, PL_ATOM, q-s, s) &&
+       PL_unify_term(ex,
+		     PL_FUNCTOR_CHARS, "error", 2,
+		       PL_FUNCTOR_CHARS, "redis_error", 2,
+			 PL_TERM, code,
+			 PL_STRING, q+1,
+		       PL_VARIABLE) )
+  { if ( msg )
+      return TRUE;
+    else
+      return PL_raise_exception(ex);
+  } else
+    return FALSE;
 }
 
 		 /*******************************
 		 *	   READ MESSAGE		*
 		 *******************************/
 
-static int redis_read_stream(IOSTREAM *in, term_t message, term_t push);
+static int redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push);
 
 #define LEN_STREAM (-2)
 #define MSG_END    (-2)
@@ -356,13 +373,13 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
     { int rc;
 
       if ( !PL_put_variable(pav+0) ||
-	   !(rc=redis_read_stream(in, pav+0, 0)) )
+	   !(rc=redis_read_stream(in, pav+0, 0, 0)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
       if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+1) ||
-	   !redis_read_stream(in, pav+1, 0) ||
+	   !redis_read_stream(in, pav+1, 0, 0) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 			          PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
@@ -382,8 +399,8 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+0) ||
 	   !PL_put_variable(pav+1) ||
-	   !redis_read_stream(in, pav+0, 0) ||
-	   !redis_read_stream(in, pav+1, 0) ||
+	   !redis_read_stream(in, pav+0, 0, 0) ||
+	   !redis_read_stream(in, pav+1, 0, 0) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 			          PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
@@ -409,7 +426,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
     for(;;)
     { int rc;
 
-      if ( !(rc=redis_read_stream(in, tmp, 0)) )
+      if ( !(rc=redis_read_stream(in, tmp, 0, 0)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
@@ -429,7 +446,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
 
     for(i=0; i<v; i++)
     { if ( !PL_unify_list(tail, head, tail) ||
-	   !redis_read_stream(in, head, 0) )
+	   !redis_read_stream(in, head, 0, 0) )
 	return FALSE;
     }
 
@@ -439,7 +456,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array)
 
 
 static int
-redis_read_stream(IOSTREAM *in, term_t message, term_t push)
+redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push)
 { int rc = TRUE;
   int c0 = Sgetcode(in);
   charbuf cb;
@@ -451,12 +468,12 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t push)
       if ( !(s=read_line(in, &cb)) )
 	rc = FALSE;
       else
-	rc = redis_error(s, message);
+	rc = redis_error(s, error);
       break;
     case '!':				/* RESP3 Blob error */
       if ( (rc=read_bulk(in, &cb)) )
       { assert(rc != -1);
-	rc = redis_error(cb.base, message);
+	rc = redis_error(cb.base, error);
       }
       break;
     case '+':
@@ -599,14 +616,14 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t push)
 }
 
 static foreign_t
-redis_read_msg(term_t from, term_t message, term_t push)
+redis_read_msg(term_t from, term_t message, term_t error, term_t push)
 { IOSTREAM *in;
 
   if ( PL_get_stream(from, &in, SIO_INPUT) )
   { term_t tail = PL_copy_term_ref(push);
     int rc;
 
-    rc = ( redis_read_stream(in, message, tail) &&
+    rc = ( redis_read_stream(in, message, error, tail) &&
 	   PL_unify_nil(tail) );
 
     if ( rc )
@@ -822,7 +839,7 @@ install_redis4pl(void)
   MKFUNCTOR(status, 1);
   MKFUNCTOR(prolog, 1);
 
-  PL_register_foreign("redis_read_msg",		  3, redis_read_msg,	       0);
+  PL_register_foreign("redis_read_msg",		  4, redis_read_msg,	       0);
   PL_register_foreign("redis_write_msg",	  2, redis_write_msg,	       0);
   PL_register_foreign("redis_write_msg_no_flush", 2, redis_write_msg_no_flush, 0);
 }
