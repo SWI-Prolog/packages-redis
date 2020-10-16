@@ -805,6 +805,9 @@ scan_pairs(_, List, List).
 
 scan_pairs([], []).
 scan_pairs([Key,Value|T0], [Key-Value|T]) :-
+    !,
+    scan_pairs(T0, T).
+scan_pairs([Key-Value|T0], [Key-Value|T]) :-
     scan_pairs(T0, T).
 
 
