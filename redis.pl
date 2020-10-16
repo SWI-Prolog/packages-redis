@@ -390,7 +390,21 @@ redis(Redis, Req) :-
 %!  redis(+Connection, +Command, -Reply) is semidet.
 %
 %   Execute a redis Command on  Connnection.   Next,  bind  Reply to the
-%   returned result. Reply is one of:
+%   returned result. Command is a  callable   term  whose functor is the
+%   name of the Redis command  and   whose  arguments  are translated to
+%   Redis arguments according to the rules below.  Note that all text is
+%   always represented using UTF-8 encoding.
+%
+%     - Atomic values are emitted verbatim
+%     - A term A:B:... where all arguments are either atoms,
+%       strings or integers (__no floats__) is translated into
+%       a string `"A:B:..."`.  This is a common shorthand for
+%       representing Redis keys.
+%     - A term prolog(Term) is emitted as "\u0000T\u0000" followed
+%       by Term in canonical form.
+%     - Any other term is emitted as write/1.
+%
+%   Reply is one of:
 %
 %     - status(String)
 %       Returned if the server replies with ``+ Status``.
@@ -412,6 +426,19 @@ redis(Redis, Req) :-
 %     - A list of _pairs_.  This is returned for the redis version 3
 %       protocol "%Map".  Both the key and value respect the same
 %       rules as above.
+%
+%   Here are some simple examples
+%
+%   ```
+%   ?- redis(default, set(a, 42), X).
+%   X = status("OK").
+%   ?- redis(default, get(a), X).
+%   X = "42".
+%   ?- redis(default, set(swipl:version, 8)).
+%   true.
+%   ?- redis(default, incr(swipl:version), X).
+%   X = 9.
+%   ```
 %
 %   @error redis_error(Code, String)
 
