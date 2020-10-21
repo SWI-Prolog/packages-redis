@@ -454,6 +454,33 @@ redis(Redis, Req) :-
 %       Interpret the bytes as a string representing a number.  If
 %       the string does not represent a number of the requested type
 %       a type_error(Type, String) is raised.
+%     - tagged_integer
+%       Same as integer, but demands the value to be between the Prolog
+%       flags `min_tagged_integer` and `max_tagged_integer`, allowing
+%       the value to be used as a dict key.
+%     - auto
+%       Same as auto(atom, number)
+%     - auto(AsText,AsNumber)
+%       If the bulk string confirms the syntax of AsNumber, convert
+%       the value to the requested numberical type.  Else convert
+%       the value to text according to AsText.  This is similar to
+%       the Prolog predicate name/2.
+%     - dict_key
+%       Alias for auto(atom,tagged_integer).  This allows the value
+%       to be used as a key for a SWI-Prolog dict.
+%     - pairs(AsKey, AsValue)
+%       Convert a map or array of even length into pairs for which the
+%       key satisfies AsKey and the value AsValue.  The `pairs` type
+%       can also be applied to a Redis array.  In this case the array
+%       length must be even.  This notably allows fetching a Redis
+%       _hash_ as pairs using ``HGETALL`` using version 2 of the
+%       Redis protocol.
+%     - dict(AsKey, AsValue)
+%       Similar to pairs(AsKey, AsValue), but convert the resulting
+%       pair list into a SWI-Prolog dict.  AsKey must convert to a
+%       valid dict key, i.e., an atom or tagged integer. See `dict_key`.
+%     - dict(AsValue)
+%       Shorthand for dict(dict_key, AsValue).
 %
 %   Here are some simple examples
 %
