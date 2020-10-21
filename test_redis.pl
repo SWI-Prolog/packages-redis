@@ -513,13 +513,30 @@ test(as_float, cleanup(rcleanup(test_redis, [test_type]))) :-
     expects(number, 0.33),
     expect_error(integer, type_error(integer, "0.33")),
     expect_error(rational, type_error(rational, "0.33")).
-test(as_rat, cleanup(rcleanup(test_redis, [test_type]))) :-
+test(as_rat, [ cleanup(rcleanup(test_redis, [test_type])),
+               condition(current_prolog_flag(bounded, false))
+             ]) :-
     redis(test_redis, set(test_type, "1r3")),
     redis(test_redis, get(test_type), Reply as float),
     assertion(Reply =:= 1/3),
     expects(rational, 1r3),
     expects(number, 1r3),
+    expects(auto, 1r3),
     expect_error(integer, type_error(integer, "1r3")).
+test(hash, [ cleanup(rcleanup(test_redis, [test_type])),
+             Reply =@= _{i:42,42:i,bn:Big,'1267650600228229401496703205376':bn,
+                         pi:3.14, name:'Bob'},
+             condition(current_prolog_flag(bounded, false))
+           ]) :-
+    Big is 1267650600228229401496703205376,
+    redis(test_redis, hset(test_type,
+                           i, 42,
+                           42, i,
+                           bn, Big,
+                           Big, bn,
+                           pi, 3.14,
+                           name, "Bob")),
+    redis(test_redis, hgetall(test_type), Reply as dict(auto)).
 
 expect_error(Target, Error) :-
     catch(redis(test_redis, get(test_type), _ as Target), E, true),
