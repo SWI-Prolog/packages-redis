@@ -384,8 +384,7 @@ redis(Redis, PipeLine) :-
     !,
     redis_pipeline(Redis, PipeLine).
 redis(Redis, Req) :-
-    redis1(Redis, Req, Out),
-    Out \== nil.
+    redis(Redis, Req, _).
 
 %!  redis(+Connection, +Command, -Reply) is semidet.
 %
@@ -502,8 +501,16 @@ redis(Redis, Req) :-
 %   @error redis_error(Code, String)
 
 redis(Redis, Req, Out) :-
+    out_val(Out, Val),
     redis1(Redis, Req, Out),
-    Out \== nil.
+    Val \== nil.
+
+out_val(Out, Val) :-
+    (   nonvar(Out),
+        Out = (Val as _)
+    ->  true
+    ;   Val = Out
+    ).
 
 redis1(Redis, Req, Out) :-
     Error = error(Formal, _),

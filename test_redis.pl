@@ -77,6 +77,7 @@ test_redis(Options) :-
     retractall(resp(_)),
     asserta(resp(V)),
     run_tests([ redis_operation,
+                redis_misc,
                 redis_strings,
                 redis_lists,
                 redis_hashes,
@@ -158,6 +159,21 @@ test(key_expiry_with_set_ttl_expire_and_exists, condition(resp(3))) :-
         ], [test_key_1]).
 
 :- end_tests(redis_operation).
+
+:- begin_tests(redis_misc).
+
+test(nil2, fail) :-
+    assertion(redis(test_redis, exists(no_such_key), 0)),
+    redis(test_redis, get(no_such_key)).
+test(nil3, fail) :-
+    assertion(redis(test_redis, exists(no_such_key), 0)),
+    redis(test_redis, get(no_such_key), _X).
+test(nil3, fail) :-
+    assertion(redis(test_redis, exists(no_such_key), 0)),
+    redis(test_redis, get(no_such_key), _X as string).
+
+:- end_tests(redis_misc).
+
 
 :- begin_tests(redis_strings).
 
