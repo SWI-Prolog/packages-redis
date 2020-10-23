@@ -104,7 +104,7 @@ hello_at(Address) :-
 test(default_connection_and_echo, Reply == "GNU Prolog rocks!") :-
     run([ echo('GNU Prolog rocks!') - (Reply as string)
         ], []).
-test(ping_the_server, Reply == status("PONG")) :-
+test(ping_the_server, Reply == status(pong)) :-
     run([ ping - Reply
         ], []).
 test(set_and_get_client_name, Client == "Objitsu") :-
@@ -178,7 +178,7 @@ test(nil3, fail) :-
 :- begin_tests(redis_strings).
 
 test(get_and_set, S == 'Hello World') :-
-    run([ set(test_string, 'Hello World') - status("OK"),
+    run([ set(test_string, 'Hello World') - status(ok),
           get(test_string) - S
         ], [test_string]).
 test(set_and_get_with_expiry, condition(resp(2))) :-
@@ -205,7 +205,7 @@ test(counting_bits_in_a_string, Count == 4) :-
 test(get_and_set_unicode, Reply == S) :-
     numlist(0, 10000, L),
     string_codes(S, L),
-    run([ set(test_string, S) - status("OK"),
+    run([ set(test_string, S) - status(ok),
           get(test_string) - (Reply as string)
         ], [test_string]).
 

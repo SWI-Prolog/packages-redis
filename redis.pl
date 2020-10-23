@@ -409,8 +409,10 @@ redis(Redis, Req) :-
 %   as a number of the content satisfies the Prolog number syntax and
 %   as an atom otherwise.
 %
-%     - status(String)
-%       Returned if the server replies with ``+ Status``.
+%     - status(Atom)
+%       Returned if the server replies with ``+ Status``.  Atom
+%       is the textual value of `Status` converted to lower case,
+%       e.g., status(ok) or status(pong).
 %     - `nil`
 %       This atom is returned for a NIL/NULL value.  Note that if
 %       the reply is only `nil`, redis/3 _fails_.  The `nil` value

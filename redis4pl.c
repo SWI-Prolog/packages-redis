@@ -37,6 +37,7 @@
 #include <assert.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 
 static int protocol_error(IOSTREAM *in, const char *id);
 static int unexpected_eof(IOSTREAM *in);
@@ -786,11 +787,16 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       break;
     case '+':
       if ( !(s=read_line(in, &cb)) )
-	rc = FALSE;
-      else
+      { rc = FALSE;
+      } else
+      { char *q;
+
+	for(q=s; *q; q++)
+	  *q = tolower(*q);
 	rc = PL_unify_term(message,
 			   PL_FUNCTOR, FUNCTOR_status1,
-			     PL_UTF8_STRING, s);
+			     PL_UTF8_CHARS, s);
+      }
       break;
     case ':':
     { long long v;
