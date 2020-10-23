@@ -614,7 +614,7 @@ recover(Error, Redis, Goal) :-
     debug(redis(recover), '~p: got error ~p; trying to reconnect',
           [Redis, Error]),
     redis_disconnect(Redis, [force(true)]),
-    (   wait(Redis)
+    (   wait_to_retry(Redis, Error)
     ->  call(Goal),
         retractall(failure(Redis, _))
     ;   throw(Error)
@@ -633,7 +633,7 @@ auto_reconnect(Server) :-
 reconnect_error(error(socket_error(_Code, _),_)).
 reconnect_error(error(syntax_error(unexpected_eof),_)).
 
-%!  wait(+Redis)
+%!  wait(+Redis, +Error)
 %
 %   Wait for some time after a failure. First  we wait for 10ms. This is
 %   doubled on each failure upto the   setting  `max_retry_wait`. If the
@@ -642,7 +642,7 @@ reconnect_error(error(syntax_error(unexpected_eof),_)).
 
 :- dynamic failure/2 as volatile.
 
-wait(Redis) :-
+wait_to_retry(Redis, Error) :-
     redis_failures(Redis, Failures),
     setting(max_retry_count, Count),
     Failures < Count,
@@ -651,6 +651,8 @@ wait(Redis) :-
     setting(max_retry_wait, MaxWait),
     Wait is min(MaxWait*100, 1<<Failures)/100.0,
     debug(redis(recover), '  Sleeping ~p seconds', [Wait]),
+    retry_message_level(Failures, Level),
+    print_message(Level, redis(retry(Redis, Failures, Wait, Error))),
     sleep(Wait).
 
 redis_failures(redis_connection(_,_,Failures0,_), Failures) :-
@@ -671,6 +673,9 @@ redis_set_failures(Server, Count) :-
     atom(Server),
     retractall(failure(Server, _)),
     asserta(failure(Server, Count)).
+
+retry_message_level(0, warning) :- !.
+retry_message_level(_, silent).
 
 
 %!  redis(+Request)
@@ -1164,8 +1169,7 @@ redis_read_stream(Redis, SI, Out) :-
         ->  Out = Out0
         ;   throw(Error)
         )
-    ;   print_message(warning, E),
-        redis_disconnect(Redis, [force(true)]),
+    ;   redis_disconnect(Redis, [force(true)]),
         throw(E)
     ).
 
@@ -1199,7 +1203,12 @@ handle_push_message(["pubsub"|List], Redis) :-
 		 *******************************/
 
 :- multifile
-    prolog:error_message//1.
+    prolog:error_message//1,
+    prolog:message//1.
 
 prolog:error_message(redis_error(Code, String)) -->
     [ 'REDIS: ~w: ~s'-[Code, String] ].
+
+prolog:message(redis(retry(_Redis, _Failures, Wait, Error))) -->
+    [ 'REDIS: connection error.  Retrying in ~2f seconds'-[Wait], nl ],
+    [ '    '-[] ], '$messages':translate_message(Error).
