@@ -595,6 +595,7 @@ str_is_number(size_t len, const char *data, enum ntype *nt)
     }
     if ( *data >= '0' && *data <= '9' )
     { isnum = TRUE;
+      signok = FALSE;
       continue;
     }
     if ( *data == '.' && isnum && !has_dot && !israt )
