@@ -102,24 +102,24 @@ hello_at(Address) :-
 :- begin_tests(redis_operation).
 
 test(default_connection_and_echo, Reply == "GNU Prolog rocks!") :-
-    run([ echo('GNU Prolog rocks!') - Reply
+    run([ echo('GNU Prolog rocks!') - (Reply as string)
         ], []).
 test(ping_the_server, Reply == status("PONG")) :-
     run([ ping - Reply
         ], []).
 test(set_and_get_client_name, Client == "Objitsu") :-
     run([ client(setname, "Objitsu"),
-          client(getname) - Client
+          client(getname) - (Client as string)
         ], []).
 test(set_and_get_timeout, Reply == OK) :-
     run([ config(set, timeout, 86400),
           config(get, timeout) - Reply
         ], []),
     (   resp(2)
-    ->  OK = ["timeout", "86400"]
-    ;   OK = ["timeout"-"86400"]
+    ->  OK = [timeout, 86400]
+    ;   OK = [timeout-86400]
     ).
-test(dbsize, Val == "Hello") :-
+test(dbsize, Val == 'Hello') :-
     run([ dbsize - Size1,
           set(test_key_1, "Hello"),
           get(test_key_1) - Val,
@@ -177,7 +177,7 @@ test(nil3, fail) :-
 
 :- begin_tests(redis_strings).
 
-test(get_and_set, S == "Hello World") :-
+test(get_and_set, S == 'Hello World') :-
     run([ set(test_string, 'Hello World') - status("OK"),
           get(test_string) - S
         ], [test_string]).
@@ -206,7 +206,7 @@ test(get_and_set_unicode, Reply == S) :-
     numlist(0, 10000, L),
     string_codes(S, L),
     run([ set(test_string, S) - status("OK"),
-          get(test_string) - Reply
+          get(test_string) - (Reply as string)
         ], [test_string]).
 
 :- end_tests(redis_strings).
@@ -218,7 +218,7 @@ test(create_a_list_with_a_single_value, Len1 == 1) :-
           assertion(R1 == 1),
           llen(test_list) - Len1
         ], [test_list]).
-test(pop_only_entry_from_a_list, Pop1 == "42") :-
+test(pop_only_entry_from_a_list, Pop1 == 42) :-
     run([ lpush(test_list, 42),
           lpop(test_list) - Pop1,
           llen(test_list) - Len0,
@@ -228,35 +228,32 @@ test(create_a_list_with_multiple_values_lpush, Len == 3) :-
     run([ lpush(test_list, "Hello", world, 42),
           llen(test_list) - Len
         ], [test_list]).
-test(lrange_on_existing_list_with_lpush, List == ["42", "world", "Hello"]) :-
+test(lrange_on_existing_list_with_lpush, List == [42, world, 'Hello']) :-
     run([ lpush(test_list, "Hello", world, 42),
           lrange(test_list, 0, -1) - List
         ], [test_list]).
 test(get_values_by_lindex_position) :-
     run([ lpush(test_list, "Hello", world, 42),
-          lindex(test_list,1) - World,
-          assertion(World == "world"),
-          lindex(test_list,2) - Hello,
-          assertion(Hello == "Hello"),
-          lindex(test_list,0) - FourthyTwo,
-          assertion(FourthyTwo == "42")
+          lindex(test_list,1) - world,
+          lindex(test_list,2) - 'Hello',
+          lindex(test_list,0) - 42
         ], [test_list]).
 test(add_to_list_with_linset_command) :-
     run([ lpush(test_list, "Hello", world, 42),
           linsert(test_list, before, 42,"FRIST") - 4,
           linsert(test_list, after, world, 'custard creams rock') - 5,
-          lindex(test_list, 3) - "custard creams rock",
-          lindex(test_list, -1) - "Hello",
-          lindex(test_list, -3) - "world",
-          lindex(test_list, 0) - "FRIST"
+          lindex(test_list, 3) - 'custard creams rock',
+          lindex(test_list, -1) - 'Hello',
+          lindex(test_list, -3) - 'world',
+          lindex(test_list, 0) - 'FRIST'
         ], [test_list]).
 test(popping_with_lpop_and_rpop) :-
     run([ rpush(test_list, "FRIST", 42, world, "custard creams rock", 'Hello'),
-          lpop(test_list) - "FRIST",
-          rpop(test_list) - "Hello",
-          lpop(test_list) - "42",
-          rpop(test_list) - "custard creams rock",
-          lpop(test_list) - "world"
+          lpop(test_list) - 'FRIST',
+          rpop(test_list) - 'Hello',
+          lpop(test_list) - 42,
+          rpop(test_list) - 'custard creams rock',
+          lpop(test_list) - world
         ], [test_list]).
 
 :- end_tests(redis_lists).
@@ -286,9 +283,9 @@ test(values_of_previously_created_keys) :-
                name, 'Emacs The Viking',
                age, 48,
                status, "Thinking") - 3,
-          hget(test_hash, name) - "Emacs The Viking",
-          hget(test_hash, age) - "48",
-          hget(test_hash, status) - "Thinking"
+          hget(test_hash, name) - 'Emacs The Viking',
+          hget(test_hash, age) - 48,
+          hget(test_hash, status) - 'Thinking'
         ], [test_hash]).
 test(increment_of_hash_value) :-
     run([ hset(test_hash,
@@ -297,10 +294,10 @@ test(increment_of_hash_value) :-
                status, "Thinking") - 3,
           hincrby(test_hash, age, -20) - 28,
           hincrby(test_hash, age, 20) - 48,
-          hincrbyfloat(test_hash, age, -0.5) - "47.5",
-          hincrbyfloat(test_hash, age, 1.5) - "49"
+          hincrbyfloat(test_hash, age, -0.5) - 47.5,
+          hincrbyfloat(test_hash, age, 1.5) - 49
         ], [test_hash]).
-test(multiple_keys_at_once, List == ["Hello", "World", "42"]) :-
+test(multiple_keys_at_once, List == ['Hello', 'World', 42]) :-
     run([ hset(test_hash,
                new_field_1, "Hello",
                new_field_2, "World",
@@ -344,19 +341,18 @@ test(empty_list, Reply == []) :-
     run([ exists(test_no_list) - 0,
           call(redis_get_list(test_redis, test_no_list, Reply))
         ], [test_no_list]).
-test(list_length_1, Reply == ["one"]) :-
+test(list_length_1, Reply == [one]) :-
     run([ rpush(test_list, one),
           call(redis_get_list(test_redis, test_list, Reply))
         ], [test_list]).
-test(list_length_2, Reply == ["one", "two"]) :-
+test(list_length_2, Reply == [one, two]) :-
     run([ rpush(test_list, one, two),
           call(redis_get_list(test_redis, test_list, Reply))
         ], [test_list]).
-test(list_long, L2 == List) :-
+test(list_long, L == List) :-
     numlist(1, 1000, List),
     run([ call(redis_set_list(test_redis, test_list, List)),
-          call(redis_get_list(test_redis, test_list, L1)),
-          call(maplist(number_string, L2, L1))
+          call(redis_get_list(test_redis, test_list, L))
         ], [test_list]).
 
 % Hash transfer
@@ -364,14 +360,14 @@ test(empty_hash, Reply =@= _{}) :-
     run([ exists(test_no_hash) - 0,
           call(redis_get_hash(test_redis, test_no_hash, Reply))
         ], [test_no_hash]).
-test(one_hash, Reply =@= _{name:"Jan Wielemaker"}) :-
+test(one_hash, Reply =@= _{name:'Jan Wielemaker'}) :-
     run([ hset(test_hash,
                name, 'Jan Wielemaker') - 1,
           call(redis_get_hash(test_redis, test_hash, Reply))
         ], [test_hash]).
 test(trip_hash, Reply =@= Hash) :-
-    Hash = _{ name: "Jan Wielemaker",
-              status: "Testing"
+    Hash = _{ name: 'Jan Wielemaker',
+              status: 'Testing'
             },
     run([ call(redis_set_hash(test_redis, test_hash, Hash)),
           call(redis_get_hash(test_redis, test_hash, Reply))
@@ -392,6 +388,12 @@ raction(C, Action-Reply) :-
     !,
     (   var(Reply)
     ->  redis(C, Action, Reply)
+    ;   Reply = (Var as Type)
+    ->  (   var(Var)
+        ->  redis(C, Action, Var as Type)
+        ;   redis(C, Action, Var0 as Type),
+            assertion(Var0 == Var)
+        )
     ;   redis(C, Action, Reply0),
         assertion(Reply0 == Reply)
     ).
@@ -462,12 +464,11 @@ listen_primes(Consumer) :-
           check_prime_string(Data, Context)).
 
 check_prime_string(Data, Context) :-
-    number_string(N, Data.get(candidate)),
-    number_string(T0, Data.get(time)),
+    N = Data.get(candidate),
     !,
     call_time(is_prime(N), Dict, True),
     get_time(T1),
-    T is T1-T0,
+    T is T1-Data.get(time),
     redis(test_redis,
           rpush(Data.drain, prolog(p(N,True,Context.consumer,Dict.cpu,T))),
           _).

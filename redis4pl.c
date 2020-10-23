@@ -1034,8 +1034,13 @@ static foreign_t
 redis_read_msg(term_t from, term_t msgin, term_t msgout,
 	       term_t error, term_t push)
 { IOSTREAM *in;
-  redis_type rt[7] = { { .kind     = T_TEXT,
-                         .pltype   = PL_STRING,
+  redis_type rt[7] = { { .kind     = T_AUTO
+                       },
+		       { .kind     = T_TEXT,
+                         .pltype   = PL_ATOM,
+                         .encoding = REP_UTF8
+                       },
+		       { .kind     = T_NUMBER,
                          .encoding = REP_UTF8
                        }
 		     };

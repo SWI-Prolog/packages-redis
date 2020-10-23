@@ -405,7 +405,9 @@ redis(Redis, Req) :-
 %
 %   Reply is either a plain term (often a  variable) or a term `Value as
 %   Type`. In the latter form,  `Type`   dictates  how  the Redis _bulk_
-%   reply is translated to Prolog. The default equals to string(utf8).
+%   reply is translated to Prolog. The default equals to `auto`, i.e.,
+%   as a number of the content satisfies the Prolog number syntax and
+%   as an atom otherwise.
 %
 %     - status(String)
 %       Returned if the server replies with ``+ Status``.
