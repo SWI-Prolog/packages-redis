@@ -81,6 +81,7 @@ test_redis(Options) :-
                 redis_strings,
                 redis_lists,
                 redis_hashes,
+                redis_scan,
                 redis_prolog,
                 redis_groups,
                 redis_types
@@ -328,6 +329,19 @@ test(deleting_some_existing_fields) :-
         ], [test_hash]).
 
 :- end_tests(redis_hashes).
+
+:- begin_tests(redis_scan).
+
+test(hscan, cleanup(rcleanup(test_redis, [test_hash]))) :-
+    redis(test_redis, del(test_hash)),
+    forall(between(1, 1000, X),
+           redis(test_redis, hset(test_hash, X, X))),
+    redis_hscan(test_redis, test_hash, List, []),
+    assertion(member(500-500, List)),
+    !.
+
+:- end_tests(redis_scan).
+
 
 :- begin_tests(redis_prolog).
 

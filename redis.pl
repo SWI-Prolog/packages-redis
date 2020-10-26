@@ -893,11 +893,10 @@ scan_next(State, List, Tail) :-
     Term =.. CList2,
     redis(Redis, Term, [NewCursor,Elems0]),
     scan_pairs(Command, Elems0, Elems),
-    (   NewCursor == "0"
+    (   NewCursor == 0
     ->  List = Elems,
         Tail = []
-    ;   number_string(CursorI, NewCursor),
-        nb_setarg(3, State, CursorI),
+    ;   nb_setarg(3, State, NewCursor),
         append(Elems, Tail, List)
     ).
 
