@@ -170,6 +170,36 @@ read_line(IOSTREAM *in, charbuf *cb)
 }
 
 
+static char *
+read_number_line(IOSTREAM *in, charbuf *cb)
+{ int maxlen = 100;
+
+  for(;maxlen-- > 0;)
+  { int c = Sgetcode(in);
+
+    if ( c == -1 )
+      return unexpected_eof(in),NULL;
+    if ( c == '\r' )
+    { add_byte_charbuf(cb, 0);
+      if ( Sgetcode(in) != '\n' )
+	return newline_expected(in),NULL;
+      return cb->base;
+    }
+    if ( c == '\n' )
+    { add_byte_charbuf(cb, 0);
+      return cb->base;
+    }
+    if ( (c >= '0' && c <= '9') ||
+	 ((c == '-' || c == '?') && cb->here == cb->base) )
+      add_byte_charbuf(cb, c);
+    else
+      return protocol_error(in, "integer_expected"),NULL;
+  }
+
+  return protocol_error(in, "integer_maxlen"),NULL;
+}
+
+
 		 /*******************************
 		 *	      ERRORS		*
 		 *******************************/
@@ -266,7 +296,7 @@ read_number(IOSTREAM *in, charbuf *cb, long long *vp)
 { long long v;
   char *s, *end;
 
-  if ( !(s=read_line(in, cb)) )
+  if ( !(s=read_number_line(in, cb)) )
     return FALSE;
   v = strtoll(s, &end, 10);
   if ( *end )
@@ -280,7 +310,7 @@ static int
 read_length(IOSTREAM *in, charbuf *cb, long long *vp)
 { char *s;
 
-  if ( !(s=read_line(in, cb)) )
+  if ( !(s=read_number_line(in, cb)) )
     return FALSE;
   if ( cb->base[0] == '?' )
   { *vp = LEN_STREAM;
