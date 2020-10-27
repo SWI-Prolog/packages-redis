@@ -573,8 +573,10 @@ read_pipeline(Redis, S, PipeLine) :-
     catch(read_pipeline2(Redis, S, PipeLine), E, true),
     (   var(Formal)
     ->  true
-    ;   print_message(warning, E),
-        redis_disconnect(Redis, [force(true)]),
+    ;   reconnect_error(E)
+    ->  redis_disconnect(Redis, [force(true)]),
+        throw(E)
+    ;   resync(Redis),
         throw(E)
     ).
 
@@ -1170,7 +1172,8 @@ redis_read_stream(Redis, SI, Out) :-
     ->  handle_push_messages(Push, Redis),
         (   var(Error)
         ->  Out = Out0
-        ;   throw(Error)
+        ;   resync(Redis),
+            throw(Error)
         )
     ;   redis_disconnect(Redis, [force(true)]),
         throw(E)
@@ -1187,6 +1190,29 @@ handle_push_messages([H|T], Redis) :-
 
 handle_push_message(["pubsub"|List], Redis) :-
     redis_broadcast(Redis, List).
+
+
+%!  resync(+Redis) is det.
+%
+%   Re-synchronize  after  an  error.  This  may  happen  if  some  type
+%   conversion fails and we have read  a   partial  reply. It is hard to
+%   figure out what to read from where we are, so we echo a random magic
+%   sequence and read until we find the reply.
+
+resync(Redis) :-
+    E = error(Formal,_),
+    catch(do_resync(Redis), E, true),
+    (   var(Formal)
+    ->  true
+    ;   redis_disconnect(Redis, [force(true)]),
+        throw(E)
+    ).
+
+do_resync(Redis) :-
+    A is random(1_000_000_000),
+    redis_stream(Redis, S, true),
+    redis_write_msg(S, echo(A)),
+    '$redis_resync'(S, A).
 
 
 %!  redis_read_msg(+Stream, -Message, -Error, -PushMessages) is det.

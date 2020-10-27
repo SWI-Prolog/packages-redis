@@ -568,6 +568,24 @@ test(hash, [ cleanup(rcleanup(test_redis, [test_type])),
                            pi, 3.14,
                            name, "Bob")),
     redis(test_redis, hgetall(test_type), Reply as dict(auto)).
+test(resync, [ cleanup(rcleanup(test_redis, [test_type])),
+               L == [1,2,3,4,5]
+             ]) :-
+    redis(test_redis, rpush(test_type, 1,2,3,4,5)),
+    catch(redis(test_redis, lrange(test_type, 0,-1), L as pairs(auto,auto)),
+          E, true),
+    assertion(subsumes_term(error(domain_error(redis_map_length,5),_), E)),
+    redis(test_redis, lrange(test_type, 0,-1), L).
+test(resync_pipe, [ cleanup(rcleanup(test_redis, [test_type])),
+               L == [1,2,3,4,5]
+             ]) :-
+    redis(test_redis, rpush(test_type, 1,2,3,4,5)),
+    catch(redis(test_redis,
+                [ lrange(test_type, 0,-1) -> L as pairs(auto,auto)
+                ]),
+          E, true),
+    assertion(subsumes_term(error(domain_error(redis_map_length,5),_), E)),
+    redis(test_redis, lrange(test_type, 0,-1), L).
 
 expect_error(Target, Error) :-
     catch(redis(test_redis, get(test_type), _ as Target), E, true),

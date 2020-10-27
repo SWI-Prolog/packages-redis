@@ -1116,6 +1116,59 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
 }
 
 
+static int
+expects_string(IOSTREAM *in, size_t len, const char *s)
+{ for(; len > 0; len--, s++)
+  { if ( Sgetc(in) != ((*s)&0xff) )
+      return FALSE;
+  }
+
+  return TRUE;
+}
+
+
+static foreign_t
+redis_resync(term_t from, term_t Magic)
+{ IOSTREAM *in;
+  char *magic;
+  size_t len;
+  char slen[64];
+
+  if ( !PL_get_nchars(Magic, &len, &magic, CVT_STRING|CVT_INTEGER|CVT_EXCEPTION) )
+    return FALSE;
+  Ssnprintf(slen, sizeof(slen), "%d\r\n", len);
+
+  if ( PL_get_stream(from, &in, SIO_INPUT) )
+  { int rc;
+
+    for(;;)
+    { if ( Sgetc(in) == '$' &&
+	   expects_string(in, strlen(slen), slen) &&
+	   expects_string(in, len, magic) &&
+	   Sgetc(in) == '\r' &&
+	   Sgetc(in) == '\n' )
+      { rc = TRUE;
+	break;
+      }
+
+      if ( Sfeof(in) )
+      { rc = unexpected_eof(in);
+	break;
+      }
+    }
+
+    if ( rc )
+      rc = PL_release_stream(in);
+    else
+      PL_release_stream_noerror(in);
+
+    return rc;
+  }
+
+  return FALSE;
+}
+
+
 		 /*******************************
 		 *	      WRITE		*
 		 *******************************/
@@ -1344,4 +1397,5 @@ install_redis4pl(void)
   PL_register_foreign("redis_read_msg",		  5, redis_read_msg,	       0);
   PL_register_foreign("redis_write_msg",	  2, redis_write_msg,	       0);
   PL_register_foreign("redis_write_msg_no_flush", 2, redis_write_msg_no_flush, 0);
+  PL_register_foreign("$redis_resync",            2, redis_resync,             0);
 }
