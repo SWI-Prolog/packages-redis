@@ -601,6 +601,8 @@ type_name(redis_type *type)
     case T_FLOAT:           return "float";
     case T_RATIONAL:        return "rational";
     case T_NUMBER:          return "number";
+    case T_PAIRS:           return "pairs";
+    case T_DICT:            return "dict";
     default:	            return "unknown";
   }
 }
@@ -687,6 +689,23 @@ is_tagged_integer(term_t t)
 
 
 static int
+return_type_error(term_t error, const char *etype, redis_type *type,
+		  size_t len, char *data)
+{ term_t t;
+
+  return ( (t=PL_new_term_ref()) &&
+	   PL_unify_chars(t, PL_STRING|REP_UTF8, len, data) &&
+	   PL_unify_term(error,
+			 PL_FUNCTOR_CHARS, "error", 2,
+			   PL_FUNCTOR_CHARS, etype, 2,
+			     PL_CHARS, type_name(type),
+			     PL_TERM, t,
+			   PL_VARIABLE) );
+}
+
+
+
+static int
 fixup_number(term_t t, term_t message, term_t error,
 	     size_t len, char *data, redis_type *type)
 { int rc;
@@ -720,17 +739,9 @@ fixup_number(term_t t, term_t message, term_t error,
   }
 
   if ( rc )
-  { rc = PL_unify(message, t);
-  } else
-  { rc = ( PL_put_variable(t) &&
-	   PL_unify_chars(t, PL_STRING|REP_UTF8, len, data) &&
-	   PL_unify_term(error,
-			 PL_FUNCTOR_CHARS, "error", 2,
-			   PL_FUNCTOR_CHARS, error_name, 2,
-			     PL_CHARS, type_name(type),
-			     PL_TERM, t,
-			   PL_VARIABLE) );
-  }
+    rc = PL_unify(message, t);
+  else
+    rc = return_type_error(error, error_name, type, len, data);
 
   return rc;
 }
@@ -787,8 +798,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
 	     PL_put_term_from_chars(t, REP_ISO_LATIN_1, len, data) &&
 	     fixup_number(t, message, error, len, data, type) );
   } else
-  { assert(0);
-    return FALSE;
+  { return return_type_error(error, "type_error", type, len, data);
   }
 }
 
