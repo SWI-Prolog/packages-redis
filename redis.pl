@@ -797,8 +797,7 @@ redis_set_list(Redis, Key, List) :-
 %   prolog(Term) syntax to store the Prolog dict as-is.
 
 redis_get_hash(Redis, Key, Dict) :-
-    redis(Redis, hgetall(Key), TwoList),
-    redis_array_dict(TwoList, _, Dict).
+    redis(Redis, hgetall(Key), Dict as dict(auto)).
 
 redis_set_hash(Redis, Key, Dict) :-
     redis_array_dict(Array, _, Dict),
