@@ -437,8 +437,10 @@ rdel(C, Key) :-
 
 :- begin_tests(redis_groups).
 
-test(primes, [setup(clean_group), %cleanup(clean_group),
-              Len == 1000]) :-
+test(primes, [ setup(clean_group),
+               cleanup(clean_group),
+               Len == 1000
+             ]) :-
     xprimes(1, 1000),
     xwait,
     redis(test_redis, llen(test_primes), Len).
