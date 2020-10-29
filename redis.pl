@@ -74,7 +74,7 @@
             redis_current_command/3     % +Redis, +Command, -Properties
           ]).
 :- autoload(library(socket), [tcp_connect/3]).
-:- autoload(library(apply), [maplist/2, convlist/3, maplist/4, maplist/3]).
+:- autoload(library(apply), [maplist/2, convlist/3, maplist/3, maplist/5]).
 :- autoload(library(broadcast), [broadcast/1]).
 :- autoload(library(error),
             [ must_be/2,
@@ -86,7 +86,7 @@
 :- autoload(library(lists), [append/3, member/2]).
 :- autoload(library(option), [merge_options/3, option/2, option/3]).
 :- autoload(library(pairs), [group_pairs_by_key/2]).
-:- use_module(library(debug), [debug/3]).
+:- use_module(library(debug), [debug/3, assertion/1]).
 :- use_module(library(settings), [setting/4, setting/2]).
 
 :- use_foreign_library(foreign(redis4pl)).
@@ -1132,15 +1132,17 @@ redis_listen_loop(Redis, Id, Conn) :-
     ;   true
     ).
 
-redis_broadcast(_, ["subscribe", _Channel, _N]) :-
+redis_broadcast(_, [subscribe, _Channel, _N]) :-
     !.
-redis_broadcast(Redis, ["message", ChannelS, Data]) :-
+redis_broadcast(Redis, [message, Channel, Data]) :-
     !,
-    atom_string(Channel, ChannelS),
     catch(broadcast(redis(Redis, Channel, Data)),
           Error,
           print_message(error, Error)).
 redis_broadcast(Redis, Message) :-
+    assertion((Message = [Type, Channel, _Data],
+               atom(Type),
+               atom(Channel))),
     debug(redis(warning), '~p: Unknown message while listening: ~p',
           [Redis,Message]).
 
