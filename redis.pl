@@ -1066,6 +1066,10 @@ pubsub_clean(Id) :-
 %
 %   Add/remove channels from for the   subscription. If no subscriptions
 %   remain, the listening thread terminates.
+%
+%   @arg Channels is either a single  channel   or  a list thereof. Each
+%   channel specification is either an atom   or a term `A:B:...`, where
+%   all parts are atoms.
 
 redis_subscribe(Id, Spec) :-
     channels(Spec, Channels),
@@ -1099,12 +1103,35 @@ redis_current_subscription(Id, Channels) :-
     group_pairs_by_key(Sorted, Grouped),
     member(Id-Channels, Grouped).
 
-channels(List, List) :-
-    is_list(List),
+channels(Spec, List) :-
+    is_list(Spec),
     !,
-    must_be(list(atom), List).
-channels(Ch, [Ch]) :-
-    must_be(atom, Ch).
+    maplist(channel_name, Spec, List).
+channels(Ch, [Key]) :-
+    channel_name(Ch, Key).
+
+channel_name(Atom, Atom) :-
+    atom(Atom),
+    !.
+channel_name(Key, Atom) :-
+    phrase(key_parts(Key), Parts),
+    !,
+    atomic_list_concat(Parts, :, Atom).
+channel_name(Key, _) :-
+    type_error(redis_key, Key).
+
+key_parts(Var) -->
+    { var(Var), !, fail }.
+key_parts(Atom) -->
+    { atom(Atom) },
+    !,
+    [Atom].
+key_parts(A:B) -->
+    key_parts(A),
+    key_parts(B).
+
+
+
 
 register_subscription(Id, Channel) :-
     (   subscription(Id, Channel)
