@@ -60,6 +60,7 @@ static atom_t ATOM_pairs;
 static atom_t ATOM_tagged_integer;
 static atom_t ATOM_dict_key;
 static atom_t ATOM_dict;
+static atom_t ATOM_prolog;
 
 static functor_t FUNCTOR_status1;
 static functor_t FUNCTOR_prolog1;
@@ -1311,6 +1312,23 @@ redis_write_stream(IOSTREAM *out, term_t message)
 	} else if ( PL_is_functor(arg, FUNCTOR_colon2) )
 	{ if ( !redis_write_key(out, arg) )
 	    return FALSE;
+	} else if ( PL_is_functor(arg, FUNCTOR_as2) )
+	{ term_t ta;
+	  atom_t name;
+	  size_t arity;
+
+	  if ( (ta=PL_new_term_ref()) &&
+	       PL_get_arg(2, arg, ta) &&
+	       PL_get_name_arity(ta, &name, &arity) &&
+	       PL_get_arg(1, arg, arg) )
+	  { if ( name == ATOM_prolog && arity == 0 )
+	    { if ( !redis_write_typed(out, arg, 'T', CVT_WRITE_CANONICAL) )
+		return FALSE;
+	    } else
+	    { return PL_domain_error("redis_type", ta);
+	    }
+	  } else
+	    return FALSE;
 	} else if ( PL_is_functor(arg, FUNCTOR_prolog1) )
 	{ _PL_get_arg(1, arg, arg);
 	  if ( !redis_write_typed(out, arg, 'T', CVT_WRITE_CANONICAL) )
@@ -1394,6 +1412,7 @@ install_redis4pl(void)
   MKATOM(tagged_integer);
   MKATOM(dict_key);
   MKATOM(dict);
+  MKATOM(prolog);
 
   MKFUNCTOR(as, 2);
   MKFUNCTOR(status, 1);
