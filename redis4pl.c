@@ -1185,7 +1185,7 @@ redis_resync(term_t from, term_t Magic)
 		 *******************************/
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Command is cmd(arg, ...), where arg is one of prolog(Term) or must be
+Command is cmd(arg, ...), where arg is one  of `Term as Type` or must be
 converted into a string.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 

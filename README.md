@@ -10,7 +10,7 @@ Charles.  The main difference to the original client are:
 
   - Replies are not wrapped by type in a compound term.
   - String replies use the SWI-Prolog string type.
-  - Values can be specified as prolog(Value), after which they
+  - Values can be specified as `Value as prolog`, after which they
     are returns as a (copy of) Value.  This prefixes the value
     using "\u0000T\u0000".
   - Strings are in UTF-8 encoding and support full Unicode.
@@ -37,27 +37,29 @@ This example communicates with the default redis server at
 default server or setup a secondary named server.
 
 ```
-?- redis(set(a, 1)).
-?- redis(get(a), X).
-X = "1".
-?- redis(set(a, prolog(1))).
-?- redis(get(a), X).
+?- redis(default, set(a, 1)).
+?- redis(default, get(a), X).
 X = 1.
-?- redis(set(a, prolog(hello(world)))).
-?- redis(get(a), X).
+?- redis(default, set(a, 1 as prolog)).
+?- redis(default, get(a), X).
+X = 1.
+?- redis(default, set(a, hello(world) as prolog)).
+?- redis(default, get(a), X).
 X = hello(world).
 ```
 
 The command mapping is the same as for the original GNU Prolog client.
 A redis command
 
-    COMMAND Arg1, Arg2, ...
+    COMMAND Arg1 Arg2, ...
 
 maps to the Prolog term
 
     command(Arg1, Arg2, ...)
 
-On return, the following mapping applies:
+On return, the mapping depends on  the   `...  as  Type` annotation. The
+default is `auto`, mapping  Redis  numerical   strings  to  numbers  and
+anything else to an atom:
 
    | Redis  | Prolog         |
    |--------|----------------|
@@ -73,13 +75,7 @@ On return, the following mapping applies:
 
 This library is still _work in progress_. We think the basic interface,
 using redis_server/3 to register services by name and the predicates
-redis/1-3 are fine. The _subscribe_ API might change. Other areas that
-need attention:
-
-  - Although using SWI-Prolog's string reading and writing rather
-    then character I/O makes the client a lot faster, there is
-    significant room for a performance improvement using a C
-    plugin.
+redis/1-3 are fine.
 
   - Currently the library is thread-safe using a lock around redis/3.
     Future versions may use a connection pool that allows multiple

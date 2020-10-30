@@ -36,7 +36,8 @@ check_prime_string(Data, Context) :-
     call_time(is_prime(N), Dict, True),
     get_time(T1),
     T is T1-T0,
-    redis(test, rpush(Data.drain, prolog(p(N,True,Context.consumer,Dict.cpu,T))), _).
+    redis(test, rpush(Data.drain,
+                      p(N,True,Context.consumer,Dict.cpu,T) as prolog)).
 
 is_prime(1) :- !.
 is_prime(2) :- !.

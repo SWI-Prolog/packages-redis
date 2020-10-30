@@ -346,7 +346,7 @@ test(hscan, cleanup(rcleanup(test_redis, [test_hash]))) :-
 :- begin_tests(redis_prolog).
 
 test(prolog_value) :-
-    run([ set(test_key, prolog(hello(world))),
+    run([ set(test_key, hello(world) as prolog),
           get(test_key) - hello(world)
         ], [test_key]).
 
@@ -486,8 +486,7 @@ check_prime_string(Data, Context) :-
     get_time(T1),
     T is T1-Data.get(time),
     redis(test_redis,
-          rpush(Data.drain, prolog(p(N,True,Context.consumer,Dict.cpu,T))),
-          _).
+          rpush(Data.drain, p(N,True,Context.consumer,Dict.cpu,T) as prolog)).
 check_prime_string(Data, Context) :-
     !,
     Consumer = Data.get(leave),

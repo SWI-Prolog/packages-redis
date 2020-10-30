@@ -399,7 +399,7 @@ redis(Redis, Req) :-
 %       strings or integers (__no floats__) is translated into
 %       a string `"A:B:..."`.  This is a common shorthand for
 %       representing Redis keys.
-%     - A term prolog(Term) is emitted as "\u0000T\u0000" followed
+%     - A term Term as prolog is emitted as "\u0000T\u0000" followed
 %       by Term in canonical form.
 %     - Any other term is emitted as write/1.
 %
@@ -726,7 +726,7 @@ redis_read(Redis, Reply) :-
 %   useful for relatively short lists holding possibly large items.
 %
 %   Note that values retrieved are _strings_, unless the value was added
-%   using prolog(Term).
+%   using `Term as prolog`.
 %
 %   @see lazy_list/2 for a discussion  on   the  difference between lazy
 %   lists and normal lists.
@@ -794,7 +794,7 @@ redis_set_list(Redis, Key, List) :-
 %   by key. redis_get_hash/3 is notably a   user friendly alternative to
 %   the Redis ``HGETALL`` command. If the  Redis   hash  is  not used by
 %   other (non-Prolog) applications one  may   also  consider  using the
-%   prolog(Term) syntax to store the Prolog dict as-is.
+%   `Term as prolog` syntax to store the Prolog dict as-is.
 
 redis_get_hash(Redis, Key, Dict) :-
     redis(Redis, hgetall(Key), Dict as dict(auto)).

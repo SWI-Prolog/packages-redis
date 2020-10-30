@@ -93,7 +93,7 @@ difference to the original client are:
 
   - Replies are not wrapped by type in a compound term.
   - String replies use the SWI-Prolog string type.
-  - Values can be specified as prolog(Value), after which they
+  - Values can be specified as `Value as prolog`, after which they
     are returns as a (copy of) Value.  This prefixes the value
     using "\u0000T\u0000".
   - Strings are in UTF-8 encoding to support full Unicode.
