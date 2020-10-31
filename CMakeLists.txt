@@ -14,7 +14,8 @@ pkg_doc(redis
 	SOURCES
 	    overview.md redis_streams.pl
 	SOURCE
-	    redis.pl libredis.tex)
+	    redis.pl libredis.tex
+        DEPENDS redis redis4pl)
 
 test_libs(redis)
 
