@@ -758,7 +758,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
       { term_t t;
 
 	return ( (t=PL_new_term_ref()) &&
-		 PL_put_term_from_chars(t, REP_UTF8,
+		 PL_put_term_from_chars(t, REP_UTF8|CVT_EXCEPTION,
 					len-3, data+3) &&
 		 PL_unify(message, t) &&
 		 (PL_reset_term_refs(t),TRUE) );
@@ -777,7 +777,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
     { term_t t;
 
       if ( (t=PL_new_term_ref()) &&
-	   PL_put_term_from_chars(t, REP_ISO_LATIN_1, len, data) )
+	   PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION, len, data) )
       { if ( ntype->kind == T_TAGGED_INTEGER &&
 	     !is_tagged_integer(t) )
 	  goto as_text;
@@ -796,7 +796,8 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
   { term_t t;
 
     return ( (t=PL_new_term_ref()) &&
-	     PL_put_term_from_chars(t, REP_ISO_LATIN_1, len, data) &&
+	     PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
+				    len, data) &&
 	     fixup_number(t, message, error, len, data, type) );
   } else
   { return return_type_error(error, "type_error", type, len, data);
@@ -862,7 +863,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       { term_t t;
 
 	rc = ( (t=PL_new_term_ref()) &&
-	       PL_put_term_from_chars(t, REP_ISO_LATIN_1,
+	       PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
 				      cb.here-cb.base, cb.base) &&
 	       PL_unify(message, t) &&
 	       (PL_reset_term_refs(t),TRUE) );
