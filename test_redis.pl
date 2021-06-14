@@ -551,9 +551,9 @@ test(as_rat, [ cleanup(rcleanup(test_redis, [test_type])),
     redis(test_redis, set(test_type, "1r3")),
     redis(test_redis, get(test_type), Reply as float),
     assertion(Reply =:= 1/3),
-    expects(rational, 1r3),
-    expects(number, 1r3),
-    expects(auto, 1r3),
+    expects_rat(rational, "1r3"),
+    expects_rat(number, "1r3"),
+    expects_rat(auto, "1r3"),
     expect_error(integer, type_error(integer, "1r3")).
 test(hash, [ cleanup(rcleanup(test_redis, [test_type])),
              Reply =@= _{i:42,42:i,bn:Big,'1267650600228229401496703205376':bn,
@@ -593,6 +593,11 @@ expect_error(Target, Error) :-
     assertion(subsumes_term(error(Error, _), E)).
 
 expects(Target, Value) :-
+    redis(test_redis, get(test_type), Reply as Target),
+    assertion(Reply == Value).
+
+expects_rat(Target, Str) :-
+    term_string(Value, Str),
     redis(test_redis, get(test_type), Reply as Target),
     assertion(Reply == Value).
 
