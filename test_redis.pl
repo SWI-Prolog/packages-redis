@@ -446,7 +446,7 @@ test(primes, [ setup(clean_group),
                Len == 1000
              ]) :-
     xprimes(1, 1000),
-    xwait,
+    xwait(1000),
     redis(test_redis, llen(test_primes), Len).
 
 :- end_tests(redis_groups).
@@ -523,23 +523,26 @@ is_prime(N) :-
     ;   true
     ).
 
-xwait :-
-    xwait(test_redis, 10, test_candidates, test_primes).
+xwait(Len) :-
+    xwait(test_redis, 10, test_candidates, test_primes, Len).
 
-xwait(Redis, MaxTime, Stream, Group) :-
+xwait(Redis, MaxTime, Stream, Group, LenTarget) :-
     get_time(T0),
-    End is T0+MaxTime,
     repeat,
-    redis(Redis, xpending(Stream, Group), [Pending|_]),
-    (   Pending =:= 0
-    ->  !
-    ;   get_time(T1),
-        T1 > End
-    ->  !, fail
-    ;   %format(user_error, "\rPending: ~D", [Pending]),
-        sleep(0.1),
-        fail
-    ).
+      get_time(T1),
+      Spent is T1-T0,
+      redis(Redis, xpending(Stream, Group), [Pending|_]),
+      debug(test, 'xwait: waited ~2f sec; Pending = ~D', [Spent, Pending]),
+      (   Pending =:= 0,
+          redis(Redis, llen(Group), LenNow),
+          LenNow >= LenTarget
+      ->  !
+      ;   Spent > MaxTime
+      ->  !, fail
+      ;   %format(user_error, "\rPending: ~D", [Pending]),
+          sleep(0.1),
+          fail
+      ).
 
 
 :- begin_tests(redis_types).
