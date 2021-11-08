@@ -452,13 +452,23 @@ test(primes, [ setup(clean_group),
 :- end_tests(redis_groups).
 
 clean_group :-
-    redis(test_redis, del(test_candidates, test_primes), _).
+    redis(test_redis, del(test_candidates, test_primes), _),
+    maplist(kill_thread, [bob,alice]).
+
+kill_thread(Name) :-
+    catch(thread_signal(Name, abort),
+          error(existence_error(thread, _),_),
+          true),
+    catch(thread_join(Name, _),
+          error(existence_error(thread, _),_),
+          true).
 
 make_group :-
+    Error = error(redis_error(busygroup,_),_),
     catch(redis(test_redis,
                 xgroup(create, test_candidates, test_primes, $, mkstream)),
-          error(redis_error(busygroup,_),_),
-          true).
+          error,
+          print_message(warning, Error)).
 
 xprimes(Low, High) :-
     make_group,
@@ -478,7 +488,7 @@ listen_primes(Consumer) :-
                                 test_primes, Consumer, [test_candidates],
                                 [ block(0.1)
                                 ]),
-                  _, [alias(Consumer), detached(true)]).
+                  _, [alias(Consumer)]).
 
 :- listen(redis_consume(test_candidates, Data, Context),
           check_prime_string(Data, Context)).
