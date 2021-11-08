@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2020, SWI-Prolog Solutions b.v.
+    Copyright (c)  2020-2021, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -34,7 +34,8 @@
 
 :- module(test_redis,
           [ test_redis/0,
-            test_redis/1                % +Options
+            test_redis/1,               % +Options
+            test_redis/2                % +Tests, +Options
           ]).
 :- use_module(library(plunit)).
 :- use_module(library(redis_streams)).
@@ -71,21 +72,24 @@ test_redis :-
                   test_redis(no_server)).
 
 test_redis(Options) :-
+    test_redis([ redis_operation,
+                 redis_misc,
+                 redis_strings,
+                 redis_lists,
+                 redis_hashes,
+                 redis_scan,
+                 redis_prolog,
+                 redis_groups,
+                 redis_types
+               ], Options).
+
+test_redis(Tests, Options) :-
     redis_server_address(Address),
     redis_server(test_redis, Address, Options),
     option(version(V), Options, 2),
     retractall(resp(_)),
     asserta(resp(V)),
-    run_tests([ redis_operation,
-                redis_misc,
-                redis_strings,
-                redis_lists,
-                redis_hashes,
-                redis_scan,
-                redis_prolog,
-                redis_groups,
-                redis_types
-              ]).
+    run_tests(Tests).
 
 redis_server_address(Host:Port) :-
     getenv('SWIPL_REDIS_SERVER', Server),
