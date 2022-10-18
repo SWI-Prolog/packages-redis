@@ -30,8 +30,8 @@ listen_primes(Consumer) :-
           check_prime_string(Data, Context)).
 
 check_prime_string(Data, Context) :-
-    number_string(N, Data.get(candidate)),
-    number_string(T0, Data.get(time)),
+    N = Data.get(candidate),
+    T0= Data.get(time),
     !,
     call_time(is_prime(N), Dict, True),
     get_time(T1),

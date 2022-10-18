@@ -3,6 +3,7 @@
           ]).
 
 :- redis_server(test, localhost:6379, [version(3)]).
+%:- redis_server(test, unix('/run/redis/redis.sock'), [version(3)]).
 
 :- debug(redis(recover)).
 :- debug(redis(claimed)).
