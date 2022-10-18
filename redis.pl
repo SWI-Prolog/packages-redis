@@ -1218,6 +1218,11 @@ handle_push_messages([H|T], Redis) :-
 
 handle_push_message(["pubsub"|List], Redis) :-
     redis_broadcast(Redis, List).
+% some protocol version 3 push messages (such as
+% __keyspace@* events) seem to come directly
+% without a pubsub header
+handle_push_message([message|List], Redis) :-
+    redis_broadcast(Redis, [message|List]).
 
 
 %!  resync(+Redis) is det.
