@@ -486,7 +486,7 @@ add_candidate(I, Into) :-
 listen_primes(Consumer) :-
     thread_create(xlisten_group(test_redis,
                                 test_primes, Consumer, [test_candidates],
-                                [ block(0.1)
+                                [ block(1)
                                 ]),
                   _, [alias(Consumer)]).
 
