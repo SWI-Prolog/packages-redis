@@ -28,6 +28,57 @@ At the moment, the following locking is in place.
     are locked using a mutex with the same name as the server name.
 
 
+## Redis TLS support {#redis-tls}
+
+If SWI-Prolog includes the `ssl` library, the Redis client can connect
+to the  server using  TLS (SSL).  Connecting  requires the  same three
+files as ``redis-cli``  requires: the root certificate  file, a client
+certificate and the private key of the client certificate.   Below is
+an example call to redis_server/3:
+
+```
+:- redis_server(swish, localhost:6379,
+		[ user(bob),
+		  password("topsecret"),
+		  version(3),
+		  tls(true),
+		  cacert('ca.crt'),
+		  key('client.key'),
+		  cert('client.cert')
+		]).
+```
+
+## Using Redis sentinels {#redis-sentinels}
+
+Redis sentinels is one of the two options to create a high
+availability service.  It consists of minimally three Redis servers
+and mininally three sentinel servers.  The sentinel servers monitor
+the Redis servers and will initiate a fail-over when the master
+becomes disfunctional and certain safety constraints are satisfied.  A
+client needs to be aware of this setup.  It is given an initial list
+with (a subset of) the known sentinels.  The client attempts to
+connect to one of the sentinels and ask it for the current Redis
+master server.  Details are described in [Sentinel client
+spec](https://redis.io/docs/reference/sentinel-clients/).  The
+SWI-Prolog client maintains the actual list of sentinels dynamically
+after successful discovery of the first sentinel.  Below is an example
+redis_server/3 to connect to a sentinel network.  The _Address_ specification
+`sentinel(swish)` tells the library we want to connect to a sentinel
+network that is monitored under the name `swish`.
+
+
+```
+:- redis_server(swish_sentinel, sentinel(swish),
+		[ user(janbob),
+		  password("topsecret"),
+		  version(3),
+		  sentinels([ host1:26379,
+			          host2:26379,
+			          host3:26379
+			        ])
+		]).
+```
+
 ## About versions {#redis-versions}
 
 The current stable version of Redis is  6. Many Linux distros still ship
