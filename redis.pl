@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Sean Charles
     E-mail:        jan@swi-prolog.org and <sean at objitsu dot com>
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2013-2020, Sean Charles
+    Copyright (c)  2013-2022, Sean Charles
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -88,6 +88,9 @@
 :- autoload(library(pairs), [group_pairs_by_key/2]).
 :- use_module(library(debug), [debug/3, assertion/1]).
 :- use_module(library(settings), [setting/4, setting/2]).
+:- if(exists_source(library(ssl))).
+:- autoload(library(ssl), [ssl_context/3, ssl_negotiate/5]).
+:- endif.
 
 :- use_foreign_library(foreign(redis4pl)).
 
@@ -182,6 +185,16 @@ server(default, localhost:6379, []).
 %       Specify the connection protocol version.  Initially this is
 %       version 2.  Redis 6 also supports version 3.  When specified
 %       as `3`, the `HELLO` command is used to upgrade the protocol.
+%     - tls(true)
+%       When specified, initiate a TLS connection.  If this option is
+%       specified we must also specify the `cacert`, `key` and `cert`
+%       options.
+%     - cacert(+File)
+%       CA Certificate file to verify with.
+%     - cert(+File)
+%       Client certificate to authenticate with.
+%     - key(+File)
+%       Private key file to authenticate with.
 %
 %   Instead of using these predicates, redis/2  and redis/3 are normally
 %   used with a _server name_  argument registered using redis_server/3.
@@ -224,13 +237,63 @@ redis_connect(Address, Conn, Options) :-
 
 do_connect(Id, Address0, Conn, Options) :-
     tcp_address(Address0, Address),
-    tcp_connect(Address, Stream, Options),
+    tcp_connect(Address, Stream0, Options),
+    tls_upgrade(Address, Stream0, Stream, Options),
     Conn = redis_connection(Id, Stream, 0, Options),
     hello(Conn, Options).
 
 tcp_address(unix(Path), Path) :-
     !.                                  % Using an atom is ambiguous
 tcp_address(Address, Address).
+
+%!  tls_upgrade(+Address, +Raw, -Stream, +Options) is det.
+%
+%   Upgrade to a TLS connection when tls(true) is specified.
+
+:- if(current_predicate(ssl_context/3)).
+tls_upgrade(Host:_Port, Raw, Stream, Options) :-
+    option(tls(true), Options),
+    !,
+    tls_option(cacert(CacertFile), Options),
+    tls_option(key(KeyFile), Options),
+    tls_option(cert(CertFile), Options),
+    ssl_context(client, SSL,
+		[ host(Host),
+		  certificate_file(CertFile),
+		  key_file(KeyFile),
+		  cacerts([file(CacertFile)]),
+		  cert_verify_hook(tls_verify),
+		  close_parent(true)
+		]),
+    stream_pair(Raw, RawRead, RawWrite),
+    ssl_negotiate(SSL, RawRead, RawWrite, Read, Write),
+    stream_pair(Stream, Read, Write).
+:- endif.
+tls_upgrade(_, Stream, Stream, _).
+
+:- if(current_predicate(ssl_context/3)).
+tls_option(Opt, Options) :-
+    option(Opt, Options),
+    !.
+tls_option(Opt, Options) :-
+    existence_error(tls_option, Opt, Options).
+
+
+%!  tls_verify(+SSL, +ProblemCert, +AllCerts, +FirstCert, +Status) is semidet.
+%
+%   Accept  or reject  the certificate  verification.  Similar  to the
+%   Redis  command   line  client   (``redis-cli``),  we   accept  the
+%   certificate as long as it is signed, not verifying the hostname.
+
+:- public tls_verify/5.
+tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, verified) :-
+    !.
+tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, hostname_mismatch) :-
+    !.
+tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, _Error) :-
+    fail.
+
+:- endif.
 
 
 %!  hello(+Connection, +Option)
