@@ -206,6 +206,10 @@ server(default, localhost:6379, []).
 %       Used together with an Address of the form sentinel(MasterName)
 %       to enable contacting a network of Redis servers guarded by a
 %       sentinel network.
+%     - sentinel_user(+User)
+%     - sentinel_password(+Password)
+%       Authentication information for the senitels.  When omitted we
+%       try to connect withour authentication.
 %
 %   Instead of using these predicates, redis/2  and redis/3 are normally
 %   used with a _server name_  argument registered using redis_server/3.
@@ -306,14 +310,9 @@ tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, _Error) :-
 %
 %   Discover the master and connect to it.
 
-% (*) When working with Redis 6,  it   seems  the sentinels did not want
-% authentication.  With  7,  they  do.  Might   be  an  issue  with  the
-% configuration.
-
 sentinel_master(Id, Pool, Master, Options) :-
     must_have_option(sentinels(Sentinels), Options),
-%   select_option(password(_), Options, Options1, _),	(*)
-    Options1 = Options,
+    sentinel_auth(Options, Options1),
     setting(sentinel_timeout, TMO),
     (   sentinel(Pool, Sentinel)
     ;   member(Sentinel, Sentinels)
@@ -340,6 +339,15 @@ sentinel_master(Id, Pool, Master, Options) :-
 	sleep(TMO),
 	sentinel_master(Id, Pool, Master, Options)
     ).
+
+sentinel_auth(Options0, Options) :-
+    option(sentinel_user(User), Options0),
+    option(sentinel_password(Passwd), Options0),
+    !,
+    merge_options([user(User), password(Passwd)], Options0, Options).
+sentinel_auth(Options0, Options) :-
+    select_option(password(_), Options0, Options, _).
+
 
 query_sentinel(Pool, Conn, Sentinel, Host:Port) :-
     redis(Conn, sentinel('get-master-addr-by-name', Pool), MasterData),
