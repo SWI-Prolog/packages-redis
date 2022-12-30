@@ -306,9 +306,14 @@ tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, _Error) :-
 %
 %   Discover the master and connect to it.
 
+% (*) When working with Redis 6,  it   seems  the sentinels did not want
+% authentication.  With  7,  they  do.  Might   be  an  issue  with  the
+% configuration.
+
 sentinel_master(Id, Pool, Master, Options) :-
     must_have_option(sentinels(Sentinels), Options),
-    select_option(password(_), Options, Options1, _),
+%   select_option(password(_), Options, Options1, _),	(*)
+    Options1 = Options,
     setting(sentinel_timeout, TMO),
     (   sentinel(Pool, Sentinel)
     ;   member(Sentinel, Sentinels)
