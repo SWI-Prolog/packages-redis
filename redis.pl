@@ -1375,15 +1375,16 @@ resync(Redis) :-
     catch(do_resync(Redis), E, true),
     (   var(Formal)
     ->  true
-    ;   redis_disconnect(Redis, [force(true)]),
-        throw(E)
+    ;   redis_disconnect(Redis, [force(true)])
     ).
 
 do_resync(Redis) :-
     A is random(1_000_000_000),
     redis_stream(Redis, S, true),
     redis_write_msg(S, echo(A)),
-    '$redis_resync'(S, A).
+    catch(call_with_time_limit(0.2, '$redis_resync'(S, A)),
+          time_limit_exceeded,
+          throw(error(time_limit_exceeded,_))).
 
 
 %!  redis_read_msg(+Stream, -Message, -Error, -PushMessages) is det.
