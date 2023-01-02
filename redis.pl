@@ -774,6 +774,7 @@ auto_reconnect(Server) :-
     server(Server, _, Options),
     option(reconnect(true), Options, true).
 
+reconnect_error(error(io_error(_Action, _On),_)).
 reconnect_error(error(socket_error(_Code, _),_)).
 reconnect_error(error(syntax_error(unexpected_eof),_)).
 
