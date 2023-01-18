@@ -1148,7 +1148,7 @@ redis_resync(term_t from, term_t Magic)
 
   if ( !PL_get_nchars(Magic, &len, &magic, CVT_STRING|CVT_INTEGER|CVT_EXCEPTION) )
     return FALSE;
-  Ssnprintf(slen, sizeof(slen), "%d\r\n", len);
+  Ssnprintf(slen, sizeof(slen), "%zd\r\n", len);
 
   if ( PL_get_stream(from, &in, SIO_INPUT) )
   { int rc;
