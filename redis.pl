@@ -752,7 +752,8 @@ bind_reply(_Command, _).
 :- meta_predicate recover(+, +, 0).
 
 recover(Error, Redis, Goal) :-
-    reconnect_error(Error),
+    Error = error(Formal, _),
+    reconnect_error(Formal),
     auto_reconnect(Redis),
     !,
     debug(redis(recover), '~p: got error ~p; trying to reconnect',
@@ -774,9 +775,10 @@ auto_reconnect(Server) :-
     server(Server, _, Options),
     option(reconnect(true), Options, true).
 
-reconnect_error(error(io_error(_Action, _On),_)).
-reconnect_error(error(socket_error(_Code, _),_)).
-reconnect_error(error(syntax_error(unexpected_eof),_)).
+reconnect_error(io_error(_Action, _On)).
+reconnect_error(socket_error(_Code, _)).
+reconnect_error(syntax_error(unexpected_eof)).
+reconnect_error(existence_error(stream, _)).
 
 %!  wait(+Redis, +Error)
 %
