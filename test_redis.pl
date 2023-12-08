@@ -38,9 +38,14 @@
             test_redis/2                % +Tests, +Options
           ]).
 :- use_module(library(plunit)).
+:- use_module(library(redis)).
 :- use_module(library(redis_streams)).
 :- use_module(library(apply)).
 :- use_module(library(debug)).
+:- use_module(library(broadcast)).
+:- use_module(library(lists)).
+:- use_module(library(option)).
+:- use_module(library(statistics)).
 
 /** <module> Redis client tests
 
