@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Sean Charles
     E-mail:        jan@swi-prolog.org and <sean at objitsu dot com>
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2013-2022, Sean Charles
+    Copyright (c)  2013-2024, Sean Charles
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -71,7 +71,9 @@
                                         % Admin stuff
             redis_property/2,           % +Reply, ?Property
             redis_current_command/2,    % +Redis,?Command
-            redis_current_command/3     % +Redis, +Command, -Properties
+            redis_current_command/3,    % +Redis, +Command, -Properties
+
+            sentinel_slave/4            % +ServerId, +Pool, -Slave, +Options
           ]).
 :- autoload(library(socket), [tcp_connect/3]).
 :- autoload(library(apply), [maplist/2, convlist/3, maplist/3, maplist/5]).
@@ -306,11 +308,30 @@ tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, _Error) :-
 
 :- endif.
 
-%!  sentinel_master(+ServerId, +SetinelPool, -Connection, +Options) is det.
+%!  sentinel_master(+ServerId, +SentinelPool, -Connection, +Options) is det.
 %
 %   Discover the master and connect to it.
 
 sentinel_master(Id, Pool, Master, Options) :-
+    format('~q.~n', [sentinel_master(Id, Pool, Master, Options)]),
+    sentinel_connect(Id, Pool, Conn, Options),
+    setting(sentinel_timeout, TMO),
+    call_cleanup(
+	query_sentinel(Pool, Conn, MasterAddr),
+	redis_disconnect(Conn)),
+    debug(redis(sentinel), 'Sentinel claims master is at ~p', [MasterAddr]),
+    do_connect(Id, MasterAddr, Master, Options),
+    debug(redis(sentinel), 'Connected to claimed master', []),
+    redis(Master, role, Role),
+    (   Role = [master|_Slaves]
+    ->  debug(redis(sentinel), 'Verified role at ~p', [MasterAddr])
+    ;   redis_disconnect(Master),
+	debug(redis(sentinel), '~p is not the master: ~p', [MasterAddr, Role]),
+	sleep(TMO),
+	sentinel_master(Id, Pool, Master, Options)
+    ).
+
+sentinel_connect(Id, Pool, Conn, Options) :-
     must_have_option(sentinels(Sentinels), Options),
     sentinel_auth(Options, Options1),
     setting(sentinel_timeout, TMO),
@@ -325,20 +346,8 @@ sentinel_master(Id, Pool, Master, Options) :-
 	  (print_message(warning, Error),fail)),
     !,
     debug(redis(sentinel), 'Connected to sentinel at ~p', [Sentinel]),
-    call_cleanup(
-	query_sentinel(Pool, Conn, Sentinel, MasterAddr),
-	redis_disconnect(Conn)),
-    debug(redis(sentinel), 'Sentinel claims master is at ~p', [MasterAddr]),
-    do_connect(Id, MasterAddr, Master, Options),
-    debug(redis(sentinel), 'Connected to claimed master', []),
-    redis(Master, role, Role),
-    (   Role = [master|_Slaves]
-    ->  debug(redis(sentinel), 'Verified role at ~p', [MasterAddr])
-    ;   redis_disconnect(Master),
-	debug(redis(sentinel), '~p is not the master: ~p', [MasterAddr, Role]),
-	sleep(TMO),
-	sentinel_master(Id, Pool, Master, Options)
-    ).
+    redis(Conn, sentinel(sentinels, Pool), Peers),
+    transaction(update_known_sentinels(Pool, Sentinel, Peers)).
 
 sentinel_auth(Options0, Options) :-
     option(sentinel_user(User), Options0),
@@ -349,11 +358,9 @@ sentinel_auth(Options0, Options) :-
     select_option(password(_), Options0, Options, _).
 
 
-query_sentinel(Pool, Conn, Sentinel, Host:Port) :-
+query_sentinel(Pool, Conn, Host:Port) :-
     redis(Conn, sentinel('get-master-addr-by-name', Pool), MasterData),
-    MasterData = [Host,Port],
-    redis(Conn, sentinel(sentinels, Pool), Peers),
-    transaction(update_known_sentinels(Pool, Sentinel, Peers)).
+    MasterData = [Host,Port].
 
 update_known_sentinels(Pool, Sentinel, Peers) :-
     retractall(sentinel(Pool, _)),
@@ -370,6 +377,19 @@ must_have_option(Opt, Options) :-
     !.
 must_have_option(Opt, Options) :-
     existence_error(option, Opt, Options).
+
+%!  sentinel_slave(+ServerId, +Pool, -Slave, +Options) is nondet.
+%
+%   True when Slave is a slave server  in the sentinel cluster. Slave is
+%   a dict holding the keys and values as described by the Redis command
+%
+%       SENTINEL SLAVES mastername
+
+sentinel_slave(ServerId, Pool, Slave, Options) :-
+    sentinel_connect(ServerId, Pool, Conn, Options),
+    redis(Conn, sentinel(slaves, Pool), Slaves),
+    member(Pairs, Slaves),
+    dict_create(Slave, redis, Pairs).
 
 %!  hello(+Connection, +Option)
 %
