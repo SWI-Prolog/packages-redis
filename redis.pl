@@ -869,6 +869,9 @@ redis_read(Redis, Reply) :-
 %   Note that values retrieved are _strings_, unless the value was added
 %   using `Term as prolog`.
 %
+%   It seems possible for ``LLEN`` to return   ``OK``. I don't know why.
+%   As a work-around we return the empty list rather than an error.
+%
 %   @see lazy_list/2 for a discussion  on   the  difference between lazy
 %   lists and normal lists.
 
@@ -877,7 +880,9 @@ redis_get_list(Redis, Key, List) :-
 
 redis_get_list(Redis, Key, Chunk, List) :-
     redis(Redis, llen(Key), Len),
-    (   (   Chunk >= Len
+    (   Len == status(ok)
+    ->  List = []
+    ;   (   Chunk >= Len
         ;   Chunk == -1
         )
     ->  (   Len == 0
