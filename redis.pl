@@ -313,7 +313,6 @@ tls_verify(_SSL, _ProblemCert, _AllCerts, _FirstCert, _Error) :-
 %   Discover the master and connect to it.
 
 sentinel_master(Id, Pool, Master, Options) :-
-    format('~q.~n', [sentinel_master(Id, Pool, Master, Options)]),
     sentinel_connect(Id, Pool, Conn, Options),
     setting(sentinel_timeout, TMO),
     call_cleanup(
