@@ -207,7 +207,7 @@ read_number_line(IOSTREAM *in, charbuf *cb)
 
 static int
 protocol_error(IOSTREAM *in, const char *msg)
-{ return PL_syntax_error(msg, in);
+{ return PL_syntax_error(msg, in),FALSE;
 }
 
 static int
@@ -453,10 +453,10 @@ static int
 map_length_error(term_t error, int64_t len)
 { return PL_unify_term(error,
 		       PL_FUNCTOR_CHARS, "error", 2,
-		         PL_FUNCTOR_CHARS, "domain_error", 2,
-		           PL_CHARS, "redis_map_length",
-		           PL_INT64, len,
-		         PL_VARIABLE);
+			 PL_FUNCTOR_CHARS, "domain_error", 2,
+			   PL_CHARS, "redis_map_length",
+			   PL_INT64, len,
+			 PL_VARIABLE);
 }
 
 
@@ -502,8 +502,8 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 	  return map_length_error(error, len);
 
 	return PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
-			             PL_TERM, pav+0,
-			             PL_TERM, pav+1);
+				     PL_TERM, pav+0,
+				     PL_TERM, pav+1);
       }
 
       return FALSE;
@@ -532,7 +532,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 	   !redis_read_stream(in, pav+0, error, 0, key_type) ||
 	   !redis_read_stream(in, pav+1, error, 0, value_type) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
-			          PL_TERM, pav+0, PL_TERM, pav+1) )
+				  PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
     }
 
@@ -604,7 +604,7 @@ type_name(redis_type *type)
     case T_NUMBER:          return "number";
     case T_PAIRS:           return "pairs";
     case T_DICT:            return "dict";
-    default:	            return "unknown";
+    default:		    return "unknown";
   }
 }
 
@@ -1102,8 +1102,8 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
       return FALSE;
     msg = PL_new_term_ref();
     if ( !PL_unify_term(msgout, PL_FUNCTOR, FUNCTOR_as2,
-			          PL_TERM, msg,
-			          PL_TERM, a) )
+				  PL_TERM, msg,
+				  PL_TERM, a) )
       return FALSE;
   } else
   { msg = msgout;
