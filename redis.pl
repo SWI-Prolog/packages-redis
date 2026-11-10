@@ -256,6 +256,7 @@ do_connect(Id, sentinel(Pool), Conn, Options) =>
     sentinel_master(Id, Pool, Conn, Options).
 do_connect(Id, Address0, Conn, Options) =>
     tcp_address(Address0, Address),
+    check_tls(Address, Options),
     tcp_connect(Address, Stream0, Options),
     tls_upgrade(Address, Stream0, Stream, Options),
     Conn = redis_connection(Id, Stream, 0, Options),
@@ -264,6 +265,23 @@ do_connect(Id, Address0, Conn, Options) =>
 tcp_address(unix(Path), Path) :-
     !.                                  % Using an atom is ambiguous
 tcp_address(Address, Address).
+
+%!  check_tls(+Address, +Options) is det.
+%
+%   Raise an error if tls(true) is specified but cannot be honoured,
+%   rather than silently using a plain connection.
+
+check_tls(Address, Options) :-
+    option(tls(true), Options),
+    !,
+    (   current_predicate(ssl_context/3)
+    ->  (   Address = _Host:_Port
+        ->  true
+        ;   domain_error(tls_address, Address)
+        )
+    ;   existence_error(library, ssl)
+    ).
+check_tls(_, _).
 
 %!  tls_upgrade(+Address, +Raw, -Stream, +Options) is det.
 %
