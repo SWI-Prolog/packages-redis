@@ -64,15 +64,21 @@ GNU-Prolog redis client by Sean Charles.
 %   require a password at this location. If this server supports version
 %   3 of the Redis protocol the tests   are  executed in version 3 mode.
 %   Otherwise in version 2 mode.
+%
+%   The protocol tests do not need a server and are always executed.
 
 test_redis :-
+    run_tests(redis_protocol),
+    test_redis_server.
+
+test_redis_server :-
     retractall(resp(_)),
     redis_server_address(Address), !,
     (   hello_at(Address)
     ->  test_redis([version(3)])
     ;   test_redis([])
     ).
-test_redis :-
+test_redis_server :-
     print_message(informational,
                   test_redis(no_server)).
 
@@ -108,6 +114,78 @@ hello_at(Address) :-
         redis_current_command(C, hello),
         redis_disconnect(C)).
 
+
+:- begin_tests(redis_protocol).
+
+%   reply(+Bytes, -Reply)
+%
+%   Read Bytes as a reply from the server.  Reply is one of
+%   ok(Message,Error,Push) or ex(Exception).
+
+reply(Bytes, Reply) :-
+    reply(Bytes, _, Reply).
+reply(Bytes, In, Reply) :-
+    tmp_file_stream(octet, File, Out),
+    format(Out, "~s", [Bytes]),
+    close(Out),
+    call_cleanup(
+        setup_call_cleanup(
+            open(File, read, S, [type(binary)]),
+            catch(( redis:redis_read_msg(S, In, Msg, Error, Push),
+                    Reply = ok(Msg, Error, Push)
+                  ),
+                  Ex, Reply = ex(Ex)),
+            close(S)),
+        delete_file(File)).
+
+syntax_error(Reply, Id) :-
+    subsumes_term(ex(error(syntax_error(Id), _)), Reply).
+
+test(verbatim, Msg == abcd) :-
+    reply(`=8\r\ntxt:abcd\r\n`, ok(Msg, _, _)).
+test(verbatim_short, true(syntax_error(R, verbatim_string))) :-
+    reply(`=2\r\nab\r\n`, R).
+test(verbatim_nil, Msg == nil) :-
+    reply(`=-1\r\n`, ok(Msg, _, _)).
+test(blob_error, E = error(redis_error(err, "bad"), _)) :-
+    reply(`!7\r\nERR bad\r\n`, ok(_, E, _)).
+test(blob_error_nil, true(syntax_error(R, nil_error))) :-
+    reply(`!-1\r\n`, R).
+test(error_no_text, E = error(redis_error(err, ""), _)) :-
+    reply(`-ERR\r\n`, ok(_, E, _)).
+test(error_text, E = error(redis_error(wrongtype, "Operation"), _)) :-
+    reply(`-WRONGTYPE Operation\r\n`, ok(_, E, _)).
+test(double, L == [1.5, inf, -inf]) :-
+    maplist([B,F]>>reply(B, ok(F, _, _)), [`,1.5\r\n`, `,inf\r\n`, `,-inf\r\n`], L0),
+    maplist([F0,F1]>>(float_class(F0, infinite) -> (F0 > 0 -> F1 = inf ; F1 = -inf) ; F1 = F0), L0, L).
+test(double_empty, true(syntax_error(R, float_expected))) :-
+    reply(`,\r\n`, R).
+test(big_number, N == -123456789012345678901234567890) :-
+    reply(`(-123456789012345678901234567890\r\n`, ok(N, _, _)).
+test(big_number_term, true(syntax_error(R, integer_expected))) :-
+    reply(`(foo(bar)\r\n`, R).
+test(integer_overflow, N == 99999999999999999999999) :-
+    reply(`:99999999999999999999999\r\n`, ok(N, _, _)).
+test(streamed_map, Map == [status(a)-1, status(b)-2]) :-
+    reply(`%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n`, ok(Map, _, _)).
+test(nested_push, true(syntax_error(R, nested_push))) :-
+    reply(`*1\r\n>1\r\n:1\r\n`, R).
+test(nesting_ok) :-
+    nested(100, Bytes),
+    reply(Bytes, ok(_, _, _)).
+test(nesting_deep, true(syntax_error(R, max_nesting_depth))) :-
+    nested(1000000, Bytes),
+    reply(Bytes, R).
+test(integer_as_text, E = error(type_error(integer, "foo("), _)) :-
+    reply(`$4\r\nfoo(\r\n`, _ as integer, ok(_, E, _)).
+
+nested(N, Bytes) :-
+    length(L, N),
+    maplist(=(`*1\r\n`), L),
+    append(L, Bytes0),
+    append(Bytes0, `:1\r\n`, Bytes).
+
+:- end_tests(redis_protocol).
 
 :- begin_tests(redis_operation).
 

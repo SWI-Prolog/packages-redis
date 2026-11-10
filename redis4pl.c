@@ -38,6 +38,7 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <errno.h>
 
 static int protocol_error(IOSTREAM *in, const char *id);
 static int unexpected_eof(IOSTREAM *in);
@@ -118,7 +119,7 @@ ensure_space_charbuf(charbuf *cb, size_t space)
       { memcpy(n, cb->base, sz);
 	cb->base = n;
       } else
-	return FALSE;
+	return PL_resource_error("memory");
     } else
     { char *n = realloc(cb->base, nlen);
       if ( !n )
@@ -156,17 +157,20 @@ read_line(IOSTREAM *in, charbuf *cb)
     if ( c == -1 )
       return unexpected_eof(in),NULL;
     if ( c == '\r' )
-    { add_byte_charbuf(cb, 0);
+    { if ( !add_byte_charbuf(cb, 0) )
+	return NULL;
       if ( Sgetcode(in) != '\n' )
 	return newline_expected(in),NULL;
       return cb->base;
     }
     if ( c == '\n' )
-    { add_byte_charbuf(cb, 0);
+    { if ( !add_byte_charbuf(cb, 0) )
+	return NULL;
       return cb->base;
     }
 
-    add_byte_charbuf(cb, c);
+    if ( !add_byte_charbuf(cb, c) )
+      return NULL;
   }
 }
 
@@ -228,12 +232,12 @@ considered a protocol error. For now we throw the error as an exception.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
-redis_error(char *s, term_t msg)
-{ term_t code;
-  char *q;
+redis_error(char *s, size_t len, term_t msg)
+{ term_t code, text;
+  char *q, *e = s+len;
   term_t ex;
 
-  for(q=s; *q >= 'A' && *q <= 'Z'; q++)
+  for(q=s; q < e && *q >= 'A' && *q <= 'Z'; q++)
     *q = *q + 'a' - 'A';
 
   if ( msg )
@@ -241,13 +245,19 @@ redis_error(char *s, term_t msg)
   else
     ex = PL_new_term_ref();
 
-  if ( (code = PL_new_term_ref()) &&
-       PL_unify_chars(code, PL_ATOM, q-s, s) &&
+  if ( !(code = PL_new_term_ref()) ||
+       !(text = PL_new_term_ref()) ||
+       !PL_unify_chars(code, PL_ATOM, q-s, s) )
+    return FALSE;
+  if ( q < e && *q == ' ' )
+    q++;
+
+  if ( PL_unify_chars(text, PL_STRING, e-q, q) &&
        PL_unify_term(ex,
 		     PL_FUNCTOR_CHARS, "error", 2,
 		       PL_FUNCTOR_CHARS, "redis_error", 2,
 			 PL_TERM, code,
-			 PL_STRING, q+1,
+			 PL_TERM, text,
 		       PL_VARIABLE) )
   { if ( msg )
       return TRUE;
@@ -281,7 +291,10 @@ typedef struct redis_type
 
 
 static int redis_read_stream(IOSTREAM *in, term_t msgin,
-			     term_t error, term_t push, redis_type *type);
+			     term_t error, term_t push, redis_type *type,
+			     int depth);
+
+#define MAX_NESTING_DEPTH 256		/* max nesting of aggregates */
 
 static int
 is_number_kind(redis_type_kind kind)
@@ -336,16 +349,14 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
   if ( !(s=read_line(in, cb)) )
     return FALSE;
 
-  if ( cb->here-cb->base == 3 &&
-       strncmp(cb->here, "inf", 3) == 0 )
+  if ( strcmp(s, "inf") == 0 )
   { v = INFINITY;
-  } else if ( cb->here-cb->base == 4 &&
-	      strncmp(cb->here, "-inf", 4) == 0 )
+  } else if ( strcmp(s, "-inf") == 0 )
   { v = -INFINITY;
   } else
   { v = strtod(s, &end);
-    if ( *end )
-      return newline_expected(in),FALSE;
+    if ( end == s || *end )
+      return protocol_error(in, "float_expected");
   }
 
   *vp = v;
@@ -462,7 +473,7 @@ map_length_error(term_t error, int64_t len)
 
 static int
 read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
-	 redis_type *type, int from_array)
+	 redis_type *type, int from_array, int depth)
 { long long v;
   redis_type *key_type, *value_type;
   term_t pairs = map;
@@ -485,25 +496,26 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
   { term_t head = PL_new_term_ref();
     term_t tail = PL_copy_term_ref(pairs);
     term_t pav  = PL_new_term_refs(2);
-    int64_t len = 0;
 
     for(;;)
     { int rc;
 
       if ( !PL_put_variable(pav+0) ||
-	   !(rc=redis_read_stream(in, pav+0, error, 0, key_type)) )
+	   !(rc=redis_read_stream(in, pav+0, error, 0, key_type, depth)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
       if ( PL_unify_list(tail, head, tail) &&
 	   PL_put_variable(pav+1) &&
-	   (rc=redis_read_stream(in, pav+1, error, 0, value_type)) )
+	   (rc=redis_read_stream(in, pav+1, error, 0, value_type, depth)) )
       { if ( rc == MSG_END )
-	  return map_length_error(error, len);
+	  return protocol_error(in, "map_length");
 
-	return PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
-				     PL_TERM, pav+0,
-				     PL_TERM, pav+1);
+	if ( !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
+				    PL_TERM, pav+0,
+				    PL_TERM, pav+1) )
+	  return FALSE;
+	continue;
       }
 
       return FALSE;
@@ -529,8 +541,8 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_put_variable(pav+0) ||
 	   !PL_put_variable(pav+1) ||
-	   !redis_read_stream(in, pav+0, error, 0, key_type) ||
-	   !redis_read_stream(in, pav+1, error, 0, value_type) ||
+	   !redis_read_stream(in, pav+0, error, 0, key_type, depth) ||
+	   !redis_read_stream(in, pav+1, error, 0, value_type, depth) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 				  PL_TERM, pav+0, PL_TERM, pav+1) )
 	return FALSE;
@@ -548,11 +560,11 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 
 static int
 read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
-	   redis_type *type)
+	   redis_type *type, int depth)
 { long long v;
 
   if ( type->kind == T_PAIRS || type->kind == T_DICT )
-    return read_map(in, cb, array, error, type, TRUE);
+    return read_map(in, cb, array, error, type, TRUE, depth);
 
   if ( !read_length(in, cb, &v) )
     return FALSE;
@@ -565,7 +577,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
     for(;;)
     { int rc;
 
-      if ( !(rc=redis_read_stream(in, tmp, error, 0, type)) )
+      if ( !(rc=redis_read_stream(in, tmp, error, 0, type, depth)) )
 	return FALSE;
       if ( rc == MSG_END )
 	break;
@@ -585,7 +597,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
 
     for(i=0; i<v; i++)
     { if ( !PL_unify_list(tail, head, tail) ||
-	   !redis_read_stream(in, head, error, 0, type) )
+	   !redis_read_stream(in, head, error, 0, type, depth) )
 	return FALSE;
     }
 
@@ -794,6 +806,10 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
     }
   } else if ( type->kind >= T_TAGGED_INTEGER && type->kind <= T_NUMBER)
   { term_t t;
+    enum ntype nt;
+
+    if ( !str_is_number(len, data, &nt) )
+      return return_type_error(error, "type_error", type, len, data);
 
     return ( (t=PL_new_term_ref()) &&
 	     PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
@@ -805,26 +821,59 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
 }
 
 
+/* unify_big_integer() unifies message with the integer represented
+   by s, which must be an optional '-' followed by digits.
+*/
+
+static int
+unify_big_integer(IOSTREAM *in, term_t message, const char *s)
+{ const char *q = s;
+  term_t t;
+
+  if ( *q == '-' )
+    q++;
+  if ( !*q )
+    return protocol_error(in, "integer_expected");
+  for(; *q; q++)
+  { if ( !(*q >= '0' && *q <= '9') )
+      return protocol_error(in, "integer_expected");
+  }
+
+  return ( (t=PL_new_term_ref()) &&
+	   PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
+				  q-s, s) &&
+	   PL_unify(message, t) &&
+	   (PL_reset_term_refs(t),TRUE) );
+}
+
+
 static int
 redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
-		  redis_type *type)
+		  redis_type *type, int depth)
 { int rc = TRUE;
-  int c0 = Sgetcode(in);
+  int c0;
   charbuf cb;
-  init_charbuf(&cb);
   char *s;
+
+  if ( ++depth > MAX_NESTING_DEPTH )
+    return protocol_error(in, "max_nesting_depth");
+
+  c0 = Sgetcode(in);
+  init_charbuf(&cb);
 
   switch(c0)
   { case '-':
       if ( !(s=read_line(in, &cb)) )
 	rc = FALSE;
       else
-	rc = redis_error(s, error);
+	rc = redis_error(s, strlen(s), error);
       break;
     case '!':				/* RESP3 Blob error */
       if ( (rc=read_bulk(in, &cb)) )
-      { assert(rc != -1);
-	rc = redis_error(cb.base, error);
+      { if ( rc == -1 )
+	  rc = protocol_error(in, "nil_error");
+	else
+	  rc = redis_error(cb.base, cb.here-cb.base, error);
       }
       break;
     case '+':
@@ -834,7 +883,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       { char *q;
 
 	for(q=s; *q; q++)
-	  *q = tolower(*q);
+	  *q = (char)tolower(*q&0xff);
 	rc = PL_unify_term(message,
 			   PL_FUNCTOR, FUNCTOR_status1,
 			     PL_UTF8_CHARS, s);
@@ -842,9 +891,20 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       break;
     case ':':
     { long long v;
+      char *end;
 
-      rc = ( read_number(in, &cb, &v) &&
-	     PL_unify_int64(message, v) );
+      if ( !(s=read_number_line(in, &cb)) )
+      { rc = FALSE;
+      } else
+      { errno = 0;
+	v = strtoll(s, &end, 10);
+	if ( end == s || *end )
+	  rc = protocol_error(in, "integer_expected");
+	else if ( errno == ERANGE )
+	  rc = unify_big_integer(in, message, s);
+	else
+	  rc = PL_unify_int64(message, v);
+      }
 
       break;
     }
@@ -858,16 +918,9 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
     }
     case '(':				/* RESP3 Big number */
     { if ( !(s=read_line(in, &cb)) )
-      { rc = FALSE;
-      } else
-      { term_t t;
-
-	rc = ( (t=PL_new_term_ref()) &&
-	       PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
-				      cb.here-cb.base, cb.base) &&
-	       PL_unify(message, t) &&
-	       (PL_reset_term_refs(t),TRUE) );
-      }
+	rc = FALSE;
+      else
+	rc = unify_big_integer(in, message, s);
       break;
     }
     case '#':				/* RESP3 boolean */
@@ -893,22 +946,31 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
     }
     case '=':				/* RESP3 Verbatim string */
     { if ( (rc=read_bulk(in, &cb)) )
-	rc = unify_bulk(message, error, cb.here-cb.base-4, cb.base+4, type);
+      { if ( rc == -1 )
+	  rc = PL_unify_atom(message, ATOM_rnil);
+	else if ( cb.here-cb.base < 4 || cb.base[3] != ':' )
+	  rc = protocol_error(in, "verbatim_string");
+	else
+	  rc = unify_bulk(message, error, cb.here-cb.base-4, cb.base+4, type);
+      }
 
       break;
     }
     case '~':				/* RESP3 set */
     case '*':				/* Array */
-    { rc = read_array(in, &cb, message, error, type);
+    { rc = read_array(in, &cb, message, error, type, depth);
       break;
     }
     case '>':				/* RESP3 push */
     { term_t t;
 
-      rc = ( push != 0 &&		/* only on toplevel term */
-	     (t=PL_new_term_ref()) &&
+      if ( !push )			/* only on toplevel term */
+      { rc = protocol_error(in, "nested_push");
+	break;
+      }
+      rc = ( (t=PL_new_term_ref()) &&
 	     PL_unify_list(push, t, push) &&
-	     read_array(in, &cb, t, error, type) &&
+	     read_array(in, &cb, t, error, type, depth) &&
 	     (PL_reset_term_refs(t),TRUE) );
       break;
     }
@@ -916,14 +978,14 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
     { term_t attrib = PL_new_term_ref();
       term_t msg    = PL_new_term_ref();
 
-      rc = ( read_map(in, &cb, attrib, error, type, FALSE) &&
-	     redis_read_stream(in, msg, error, 0, type) &&
+      rc = ( read_map(in, &cb, attrib, error, type, FALSE, depth) &&
+	     redis_read_stream(in, msg, error, 0, type, depth) &&
 	     PL_unify_term(message, PL_FUNCTOR, FUNCTOR_attrib2,
 				      PL_TERM, attrib, PL_TERM, msg) );
       break;
     }
     case '%':				/* RESP3 map */
-    { rc = read_map(in, &cb, message, error, type, FALSE);
+    { rc = read_map(in, &cb, message, error, type, FALSE, depth);
       break;
     }
     case '_':				/* RESP3 nil */
@@ -1113,7 +1175,7 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
   { term_t tail = PL_copy_term_ref(push);
     int rc;
 
-    rc = ( redis_read_stream(in, msg, error, tail, &rt[0]) &&
+    rc = ( redis_read_stream(in, msg, error, tail, &rt[0], 0) &&
 	   PL_unify_nil(tail) );
 
     if ( rc )
