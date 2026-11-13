@@ -105,7 +105,7 @@ free_charbuf(charbuf *cb)
 static int
 ensure_space_charbuf(charbuf *cb, size_t space)
 { if ( cb->here + space < cb->end )
-  { return TRUE;
+  { return true;
   } else
   { size_t len  = cb->end  - cb->base;
     size_t sz   = cb->here - cb->base;
@@ -129,7 +129,7 @@ ensure_space_charbuf(charbuf *cb, size_t space)
     cb->here = &cb->base[sz];
     cb->end = &cb->base[nlen];
 
-    return TRUE;
+    return true;
   }
 }
 
@@ -138,10 +138,10 @@ add_byte_charbuf(charbuf *cb, int c)
 { if ( ensure_space_charbuf(cb, 1) )
   { *cb->here++ = c;
 
-    return TRUE;
+    return true;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -211,7 +211,7 @@ read_number_line(IOSTREAM *in, charbuf *cb)
 
 static int
 protocol_error(IOSTREAM *in, const char *msg)
-{ return PL_syntax_error(msg, in),FALSE;
+{ return PL_syntax_error(msg, in),false;
 }
 
 static int
@@ -248,7 +248,7 @@ redis_error(char *s, size_t len, term_t msg)
   if ( !(code = PL_new_term_ref()) ||
        !(text = PL_new_term_ref()) ||
        !PL_unify_chars(code, PL_ATOM, q-s, s) )
-    return FALSE;
+    return false;
   if ( q < e && *q == ' ' )
     q++;
 
@@ -260,11 +260,11 @@ redis_error(char *s, size_t len, term_t msg)
 			 PL_TERM, text,
 		       PL_VARIABLE) )
   { if ( msg )
-      return TRUE;
+      return true;
     else
       return PL_raise_exception(ex);
   } else
-    return FALSE;
+    return false;
 }
 
 		 /*******************************
@@ -311,13 +311,13 @@ read_number(IOSTREAM *in, charbuf *cb, long long *vp)
   char *s, *end;
 
   if ( !(s=read_number_line(in, cb)) )
-    return FALSE;
+    return false;
   v = strtoll(s, &end, 10);
   if ( *end )
     return newline_expected(in);
   *vp = v;
 
-  return TRUE;
+  return true;
 }
 
 static int
@@ -325,7 +325,7 @@ read_length(IOSTREAM *in, charbuf *cb, long long *vp)
 { char *s;
 
   if ( !(s=read_number_line(in, cb)) )
-    return FALSE;
+    return false;
   if ( cb->base[0] == '?' )
   { *vp = LEN_STREAM;
   } else
@@ -338,7 +338,7 @@ read_length(IOSTREAM *in, charbuf *cb, long long *vp)
     *vp = v;
   }
 
-  return TRUE;
+  return true;
 }
 
 static int
@@ -347,7 +347,7 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
   char *s, *end;
 
   if ( !(s=read_line(in, cb)) )
-    return FALSE;
+    return false;
 
   if ( strcmp(s, "inf") == 0 )
   { v = INFINITY;
@@ -361,7 +361,7 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
 
   *vp = v;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -376,12 +376,12 @@ expect_crlf(IOSTREAM *in)
   { return newline_expected(in);
   }
 
-  return TRUE;
+  return true;
 }
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Returns: FALSE --> error, TRUE: bulk in cb, -1: got nil.
+Returns: false --> error, true: bulk in cb, -1: got nil.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
@@ -395,12 +395,12 @@ read_chunk(IOSTREAM *in, charbuf *cb, long long len)
       return unexpected_eof(in);
 
     if ( !add_byte_charbuf(cb, c) )
-      return FALSE;
+      return false;
   }
   if ( !expect_crlf(in) )
-    return FALSE;
+    return false;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -409,7 +409,7 @@ read_bulk(IOSTREAM *in, charbuf *cb)
 { long long v;
 
   if ( !(read_length(in, cb, &v)) )
-    return FALSE;
+    return false;
 
   if ( v == LEN_STREAM )		/* RESP3 Streamed string */
   { charbuf nbuf;
@@ -424,12 +424,12 @@ read_bulk(IOSTREAM *in, charbuf *cb)
 	return protocol_error(in, "; expected");
       empty_charbuf(&nbuf);
       if ( !read_number(in, &nbuf, &chlen) )
-	return FALSE;
+	return false;
       if ( chlen == 0 )
-      { return TRUE;
+      { return true;
       } else
       { if ( !read_chunk(in, cb, chlen) )
-	  return FALSE;
+	  return false;
       }
     }
   } else
@@ -490,7 +490,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
   }
 
   if ( !read_length(in, cb, &v) )
-    return FALSE;
+    return false;
 
   if ( v == LEN_STREAM )
   { term_t head = PL_new_term_ref();
@@ -502,7 +502,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 
       if ( !PL_put_variable(pav+0) ||
 	   !(rc=redis_read_stream(in, pav+0, error, 0, key_type, depth)) )
-	return FALSE;
+	return false;
       if ( rc == MSG_END )
 	break;
       if ( PL_unify_list(tail, head, tail) &&
@@ -514,11 +514,11 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 	if ( !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 				    PL_TERM, pav+0,
 				    PL_TERM, pav+1) )
-	  return FALSE;
+	  return false;
 	continue;
       }
 
-      return FALSE;
+      return false;
     }
 
     rc = PL_unify_nil(tail);
@@ -545,7 +545,7 @@ read_map(IOSTREAM *in, charbuf *cb, term_t map, term_t error,
 	   !redis_read_stream(in, pav+1, error, 0, value_type, depth) ||
 	   !PL_unify_term(head, PL_FUNCTOR, FUNCTOR_pair2,
 				  PL_TERM, pav+0, PL_TERM, pav+1) )
-	return FALSE;
+	return false;
     }
 
     rc = PL_unify_nil(tail);
@@ -564,10 +564,10 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
 { long long v;
 
   if ( type->kind == T_PAIRS || type->kind == T_DICT )
-    return read_map(in, cb, array, error, type, TRUE, depth);
+    return read_map(in, cb, array, error, type, true, depth);
 
   if ( !read_length(in, cb, &v) )
-    return FALSE;
+    return false;
 
   if ( v == LEN_STREAM )
   { term_t head = PL_new_term_ref();
@@ -578,12 +578,12 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
     { int rc;
 
       if ( !(rc=redis_read_stream(in, tmp, error, 0, type, depth)) )
-	return FALSE;
+	return false;
       if ( rc == MSG_END )
 	break;
       if ( !PL_unify_list(tail, head, tail) ||
 	   !PL_unify(head, tmp) )
-	return FALSE;
+	return false;
     }
 
     return PL_unify_nil(tail);
@@ -598,7 +598,7 @@ read_array(IOSTREAM *in, charbuf *cb, term_t array, term_t error,
     for(i=0; i<v; i++)
     { if ( !PL_unify_list(tail, head, tail) ||
 	   !redis_read_stream(in, head, error, 0, type, depth) )
-	return FALSE;
+	return false;
     }
 
     return PL_unify_nil(tail);
@@ -628,38 +628,38 @@ enum ntype
 
 static int
 str_is_number(size_t len, const char *data, enum ntype *nt)
-{ int isnum = FALSE;
-  int signok = TRUE;
-  int has_dot = FALSE;
-  int has_e = FALSE;
-  int israt = FALSE;
+{ int isnum = false;
+  int signok = true;
+  int has_dot = false;
+  int has_e = false;
+  int israt = false;
 
   for(; len > 0; len--,data++)
   { if ( (*data == '+' || *data == '-') && signok )
-    { signok = FALSE;
+    { signok = false;
       continue;
     }
     if ( *data >= '0' && *data <= '9' )
-    { isnum = TRUE;
-      signok = FALSE;
+    { isnum = true;
+      signok = false;
       continue;
     }
     if ( *data == '.' && isnum && !has_dot && !israt )
-    { has_dot = TRUE;
-      signok = FALSE;
+    { has_dot = true;
+      signok = false;
       continue;
     }
     if ( (*data == 'e' || *data == 'E') && isnum && !has_e && !israt )
-    { has_e = TRUE;
-      signok = TRUE;
+    { has_e = true;
+      signok = true;
       continue;
     }
     if ( *data == 'r' && isnum && !has_e && !has_dot && !israt )
-    { israt = TRUE;
+    { israt = true;
       continue;
     }
 
-    return FALSE;
+    return false;
   }
 
   if ( isnum )
@@ -684,10 +684,10 @@ compatible_num(enum ntype nt, redis_type_kind kind)
       return nt == N_INTEGER || nt == N_RATIONAL;
     case T_FLOAT:
     case T_NUMBER:
-      return TRUE;
+      return true;
     default:
       assert(0);
-      return FALSE;
+      return false;
   }
 }
 
@@ -748,7 +748,7 @@ fixup_number(term_t t, term_t message, term_t error,
       break;
     default:
       assert(0);
-      rc = FALSE;
+      rc = false;
   }
 
   if ( rc )
@@ -773,7 +773,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
 		 PL_put_term_from_chars(t, REP_UTF8|CVT_EXCEPTION,
 					len-3, data+3) &&
 		 PL_unify(message, t) &&
-		 (PL_reset_term_refs(t),TRUE) );
+		 (PL_reset_term_refs(t),true) );
       }
     }
   }
@@ -796,7 +796,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
 
 	return fixup_number(t, message, error, len, data, ntype);
       } else
-	return FALSE;
+	return false;
     } else
     { redis_type *ttype;
 
@@ -843,14 +843,14 @@ unify_big_integer(IOSTREAM *in, term_t message, const char *s)
 	   PL_put_term_from_chars(t, REP_ISO_LATIN_1|CVT_EXCEPTION,
 				  q-s, s) &&
 	   PL_unify(message, t) &&
-	   (PL_reset_term_refs(t),TRUE) );
+	   (PL_reset_term_refs(t),true) );
 }
 
 
 static int
 redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
 		  redis_type *type, int depth)
-{ int rc = TRUE;
+{ int rc = true;
   int c0;
   charbuf cb;
   char *s;
@@ -864,7 +864,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
   switch(c0)
   { case '-':
       if ( !(s=read_line(in, &cb)) )
-	rc = FALSE;
+	rc = false;
       else
 	rc = redis_error(s, strlen(s), error);
       break;
@@ -878,7 +878,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       break;
     case '+':
       if ( !(s=read_line(in, &cb)) )
-      { rc = FALSE;
+      { rc = false;
       } else
       { char *q;
 
@@ -894,7 +894,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       char *end;
 
       if ( !(s=read_number_line(in, &cb)) )
-      { rc = FALSE;
+      { rc = false;
       } else
       { errno = 0;
 	v = strtoll(s, &end, 10);
@@ -918,7 +918,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
     }
     case '(':				/* RESP3 Big number */
     { if ( !(s=read_line(in, &cb)) )
-	rc = FALSE;
+	rc = false;
       else
 	rc = unify_big_integer(in, message, s);
       break;
@@ -971,21 +971,21 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
       rc = ( (t=PL_new_term_ref()) &&
 	     PL_unify_list(push, t, push) &&
 	     read_array(in, &cb, t, error, type, depth) &&
-	     (PL_reset_term_refs(t),TRUE) );
+	     (PL_reset_term_refs(t),true) );
       break;
     }
     case '|':				/* RESP3 attrib */
     { term_t attrib = PL_new_term_ref();
       term_t msg    = PL_new_term_ref();
 
-      rc = ( read_map(in, &cb, attrib, error, type, FALSE, depth) &&
+      rc = ( read_map(in, &cb, attrib, error, type, false, depth) &&
 	     redis_read_stream(in, msg, error, 0, type, depth) &&
 	     PL_unify_term(message, PL_FUNCTOR, FUNCTOR_attrib2,
 				      PL_TERM, attrib, PL_TERM, msg) );
       break;
     }
     case '%':				/* RESP3 map */
-    { rc = read_map(in, &cb, message, error, type, FALSE, depth);
+    { rc = read_map(in, &cb, message, error, type, false, depth);
       break;
     }
     case '_':				/* RESP3 nil */
@@ -1079,7 +1079,7 @@ get_as_type(term_t t, redis_type *type, int flags)
 	      get_as_type(arg, &type[1], AS_PAIR_KEY) &&
 	      PL_get_arg(2, t, arg) &&
 	      get_as_type(arg, &type[4], AS_PAIR_VALUE) ) )
-	return FALSE;
+	return false;
     } else if ( name == ATOM_dict && arity == 1 && (flags&AS_TOP) )
     { term_t arg = PL_new_term_ref();
 
@@ -1092,7 +1092,7 @@ get_as_type(term_t t, redis_type *type, int flags)
 
       if ( !( PL_get_arg(1, t, arg) &&
 	      get_as_type(arg, &type[4], AS_PAIR_VALUE) ) )
-	return FALSE;
+	return false;
     } else
       return PL_domain_error("redis_type", t);
 
@@ -1107,7 +1107,7 @@ get_as_type(term_t t, redis_type *type, int flags)
 
 	_PL_get_arg(1, t, a);
 	if ( !PL_get_atom_ex(a, &an) )
-	  return FALSE;
+	  return false;
 
 	if ( an == ATOM_bytes )
 	  type->encoding = REP_ISO_LATIN_1;
@@ -1121,7 +1121,7 @@ get_as_type(term_t t, redis_type *type, int flags)
 	return PL_type_error("redis_type", t);
     }
 
-    return TRUE;
+    return true;
   }
 
   return PL_type_error("redis_type", t);
@@ -1161,12 +1161,12 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
 
     _PL_get_arg(2, msgin, a);
     if ( !get_as_type(a, &rt[0], AS_TOP) )
-      return FALSE;
+      return false;
     msg = PL_new_term_ref();
     if ( !PL_unify_term(msgout, PL_FUNCTOR, FUNCTOR_as2,
 				  PL_TERM, msg,
 				  PL_TERM, a) )
-      return FALSE;
+      return false;
   } else
   { msg = msgout;
   }
@@ -1186,7 +1186,7 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1194,10 +1194,10 @@ static int
 expects_string(IOSTREAM *in, size_t len, const char *s)
 { for(; len > 0; len--, s++)
   { if ( Sgetc(in) != ((*s)&0xff) )
-      return FALSE;
+      return false;
   }
 
-  return TRUE;
+  return true;
 }
 
 
@@ -1209,7 +1209,7 @@ redis_resync(term_t from, term_t Magic)
   char slen[64];
 
   if ( !PL_get_nchars(Magic, &len, &magic, CVT_STRING|CVT_INTEGER|CVT_EXCEPTION) )
-    return FALSE;
+    return false;
   Ssnprintf(slen, sizeof(slen), "%zd\r\n", len);
 
   if ( PL_get_stream(from, &in, SIO_INPUT) )
@@ -1221,7 +1221,7 @@ redis_resync(term_t from, term_t Magic)
 	   expects_string(in, len, magic) &&
 	   Sgetc(in) == '\r' &&
 	   Sgetc(in) == '\n' )
-      { rc = TRUE;
+      { rc = true;
 	break;
       }
 
@@ -1239,7 +1239,7 @@ redis_resync(term_t from, term_t Magic)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
@@ -1263,7 +1263,7 @@ redis_write_one(IOSTREAM *out, term_t t, int flags)
   { if ( !(Sfprintf(out, "$%zd\r\n", len) >= 0 &&
 	   Sfwrite(s, 1, len, out) == len &&
 	   Sfprintf(out, "\r\n") >= 0) )
-      rc = FALSE;
+      rc = false;
   }
   PL_STRINGS_RELEASE();
 
@@ -1282,7 +1282,7 @@ redis_write_typed(IOSTREAM *out, term_t t, int type, int flags)
   { if ( !(Sfprintf(out, "$%zd\r\n%c%c%c", len+3, 0, type, 0) >= 0 &&
 	   Sfwrite(s, 1, len, out) == len &&
 	   Sfprintf(out, "\r\n") >= 0) )
-      rc = FALSE;
+      rc = false;
   }
   PL_STRINGS_RELEASE();
 
@@ -1296,7 +1296,7 @@ redis_write_key(IOSTREAM *out, term_t key)
   term_t t  = PL_copy_term_ref(key);
   charbuf cb;
   char *s;
-  int rc = TRUE;
+  int rc = true;
   size_t len;
   int flags = CVT_ATOM|CVT_STRING|CVT_LIST|CVT_INTEGER;
 
@@ -1317,7 +1317,7 @@ redis_write_key(IOSTREAM *out, term_t key)
       }
     }
     PL_STRINGS_RELEASE();
-    if ( rc != TRUE )
+    if ( rc != true )
       goto out;
   } while( PL_is_functor(t, FUNCTOR_colon2) );
 
@@ -1332,7 +1332,7 @@ redis_write_key(IOSTREAM *out, term_t key)
   }
   PL_STRINGS_RELEASE();
 
-  if ( rc == TRUE )
+  if ( rc == true )
   { len = cb.here - cb.base;
     if ( !(Sfprintf(out, "$%zd\r\n", len) >= 0 &&
 	   Sfwrite(cb.base, 1, len, out) == len &&
@@ -1341,10 +1341,10 @@ redis_write_key(IOSTREAM *out, term_t key)
   }
 
 out:
-  if ( rc == FALSE )
+  if ( rc == false )
   { rc = redis_write_one(out, key, CVT_WRITE);
   } else if ( rc == -1 )
-  { rc = FALSE;
+  { rc = false;
   }
 
   free_charbuf(&cb);
@@ -1361,7 +1361,7 @@ redis_write_stream(IOSTREAM *out, term_t message)
   { term_t arg = PL_new_term_ref();
 
     if ( Sfprintf(out, "*%zd\r\n", arity+1) < 0 )
-      return FALSE;
+      return false;
     PL_put_atom(arg, name);
     if ( redis_write_one(out, arg, CVT_ATOM) )
     { size_t i;
@@ -1371,10 +1371,10 @@ redis_write_stream(IOSTREAM *out, term_t message)
 
 	if ( PL_is_atomic(arg) )
 	{ if ( !redis_write_one(out, arg, CVT_ATOMIC) )
-	    return FALSE;
+	    return false;
 	} else if ( PL_is_functor(arg, FUNCTOR_colon2) )
 	{ if ( !redis_write_key(out, arg) )
-	    return FALSE;
+	    return false;
 	} else if ( PL_is_functor(arg, FUNCTOR_as2) )
 	{ term_t ta;
 	  atom_t name;
@@ -1386,23 +1386,23 @@ redis_write_stream(IOSTREAM *out, term_t message)
 	       PL_get_arg(1, arg, arg) )
 	  { if ( name == ATOM_prolog && arity == 0 )
 	    { if ( !redis_write_typed(out, arg, 'T', CVT_WRITE_CANONICAL) )
-		return FALSE;
+		return false;
 	    } else
 	    { return PL_domain_error("redis_type", ta);
 	    }
 	  } else
-	    return FALSE;
+	    return false;
 	} else if ( PL_is_functor(arg, FUNCTOR_prolog1) )
 	{ _PL_get_arg(1, arg, arg);
 	  if ( !redis_write_typed(out, arg, 'T', CVT_WRITE_CANONICAL) )
-	    return FALSE;
+	    return false;
 	} else
 	{ if ( !redis_write_one(out, arg, CVT_WRITE) )
-	    return FALSE;
+	    return false;
 	}
       }
 
-      return TRUE;
+      return true;
     }
   }
 
@@ -1428,18 +1428,18 @@ write_msg(term_t into, term_t message, int flush)
     return rc;
   }
 
-  return FALSE;
+  return false;
 }
 
 
 static foreign_t
 redis_write_msg(term_t into, term_t message)
-{ return write_msg(into, message, TRUE);
+{ return write_msg(into, message, true);
 }
 
 static foreign_t
 redis_write_msg_no_flush(term_t into, term_t message)
-{ return write_msg(into, message, FALSE);
+{ return write_msg(into, message, false);
 }
 
 
