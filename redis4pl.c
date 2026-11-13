@@ -40,9 +40,9 @@
 #include <ctype.h>
 #include <errno.h>
 
-static int protocol_error(IOSTREAM *in, const char *id);
-static int unexpected_eof(IOSTREAM *in);
-static int newline_expected(IOSTREAM *in);
+static bool protocol_error(IOSTREAM *in, const char *id);
+static bool unexpected_eof(IOSTREAM *in);
+static bool newline_expected(IOSTREAM *in);
 
 static atom_t ATOM_rnil;
 static atom_t ATOM_atom;
@@ -102,7 +102,7 @@ free_charbuf(charbuf *cb)
     PL_free(cb->base);
 }
 
-static int
+static bool
 ensure_space_charbuf(charbuf *cb, size_t space)
 { if ( cb->here + space < cb->end )
   { return true;
@@ -133,7 +133,7 @@ ensure_space_charbuf(charbuf *cb, size_t space)
   }
 }
 
-static int
+static bool
 add_byte_charbuf(charbuf *cb, int c)
 { if ( ensure_space_charbuf(cb, 1) )
   { *cb->here++ = c;
@@ -209,17 +209,17 @@ read_number_line(IOSTREAM *in, charbuf *cb)
 		 *	      ERRORS		*
 		 *******************************/
 
-static int
+static bool
 protocol_error(IOSTREAM *in, const char *msg)
 { return PL_syntax_error(msg, in),false;
 }
 
-static int
+static bool
 unexpected_eof(IOSTREAM *in)
 { return protocol_error(in, "unexpected_eof");
 }
 
-static int
+static bool
 newline_expected(IOSTREAM *in)
 { return protocol_error(in, "newline_expected");
 }
@@ -231,7 +231,7 @@ inside a nested term.  I  think  this   should  not  be  possible and be
 considered a protocol error. For now we throw the error as an exception.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static bool
 redis_error(char *s, size_t len, term_t msg)
 { term_t code, text;
   char *q, *e = s+len;
@@ -296,7 +296,7 @@ static int redis_read_stream(IOSTREAM *in, term_t msgin,
 
 #define MAX_NESTING_DEPTH 256		/* max nesting of aggregates */
 
-static int
+static bool
 is_number_kind(redis_type_kind kind)
 { return kind >= T_TAGGED_INTEGER && kind <= T_NUMBER;
 }
@@ -305,7 +305,7 @@ is_number_kind(redis_type_kind kind)
 #define LEN_STREAM (-2)
 #define MSG_END    (-2)
 
-static int
+static bool
 read_number(IOSTREAM *in, charbuf *cb, long long *vp)
 { long long v;
   char *s, *end;
@@ -320,7 +320,7 @@ read_number(IOSTREAM *in, charbuf *cb, long long *vp)
   return true;
 }
 
-static int
+static bool
 read_length(IOSTREAM *in, charbuf *cb, long long *vp)
 { char *s;
 
@@ -341,7 +341,7 @@ read_length(IOSTREAM *in, charbuf *cb, long long *vp)
   return true;
 }
 
-static int
+static bool
 read_double(IOSTREAM *in, charbuf *cb, double *vp)
 { double v;
   char *s, *end;
@@ -365,7 +365,7 @@ read_double(IOSTREAM *in, charbuf *cb, double *vp)
 }
 
 
-static int
+static bool
 expect_crlf(IOSTREAM *in)
 { int c;
 
@@ -384,7 +384,7 @@ expect_crlf(IOSTREAM *in)
 Returns: false --> error, true: bulk in cb, -1: got nil.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static bool
 read_chunk(IOSTREAM *in, charbuf *cb, long long len)
 { long long i;
 
@@ -442,7 +442,7 @@ read_bulk(IOSTREAM *in, charbuf *cb)
 }
 
 
-static int
+static bool
 dict_from_pairs(term_t map, term_t pairs)
 { static predicate_t pred = NULL;
   term_t av = PL_new_term_refs(3);
@@ -460,7 +460,7 @@ dict_from_pairs(term_t map, term_t pairs)
 Read a map to a pair list.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static int
+static bool
 map_length_error(term_t error, int64_t len)
 { return PL_unify_term(error,
 		       PL_FUNCTOR_CHARS, "error", 2,
@@ -626,7 +626,7 @@ enum ntype
   N_FLOAT
 };
 
-static int
+static bool
 str_is_number(size_t len, const char *data, enum ntype *nt)
 { int isnum = false;
   int signok = true;
@@ -674,7 +674,7 @@ str_is_number(size_t len, const char *data, enum ntype *nt)
   return isnum;
 }
 
-static int
+static bool
 compatible_num(enum ntype nt, redis_type_kind kind)
 { switch(kind)
   { case T_INTEGER:
@@ -692,7 +692,7 @@ compatible_num(enum ntype nt, redis_type_kind kind)
 }
 
 
-static int
+static bool
 is_tagged_integer(term_t t)
 { int64_t i;
 
@@ -701,7 +701,7 @@ is_tagged_integer(term_t t)
 }
 
 
-static int
+static bool
 return_type_error(term_t error, const char *etype, redis_type *type,
 		  size_t len, char *data)
 { term_t t;
@@ -825,7 +825,7 @@ unify_bulk(term_t message, term_t error, size_t len, char *data, redis_type *typ
    by s, which must be an optional '-' followed by digits.
 */
 
-static int
+static bool
 unify_big_integer(IOSTREAM *in, term_t message, const char *s)
 { const char *q = s;
   term_t t;
@@ -1018,7 +1018,7 @@ redis_read_stream(IOSTREAM *in, term_t message, term_t error, term_t push,
 #define AS_AUTO_NUMBER	0x0010
 
 
-static int
+static bool
 get_as_type(term_t t, redis_type *type, int flags)
 { atom_t name;
   size_t arity;
@@ -1190,7 +1190,7 @@ redis_read_msg(term_t from, term_t msgin, term_t msgout,
 }
 
 
-static int
+static bool
 expects_string(IOSTREAM *in, size_t len, const char *s)
 { for(; len > 0; len--, s++)
   { if ( Sgetc(in) != ((*s)&0xff) )
@@ -1352,7 +1352,7 @@ out:
 }
 
 
-static int
+static bool
 redis_write_stream(IOSTREAM *out, term_t message)
 { atom_t name;
   size_t arity;
